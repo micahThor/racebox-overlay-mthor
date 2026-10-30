@@ -119,6 +119,7 @@ KINDS = {
     "good": "Good braking",
     "topspeed": "Top speed",
     "consistency": "Consistency",
+    "ghost": "Ghost gap",
 }
 DEFAULTS = {
     "wide_m": 2.5,            # this far outside the best lap's line counts as running wide
@@ -127,6 +128,7 @@ DEFAULTS = {
     "min_loss": 0.1,          # a corner mistake has to cost at least this much time
     "max_corner_calls": 2,    # most mistake calls per lap
     "consistency_s": 0.35,    # laps within this spread count as consistent
+    "ghost_gap_m": 5.0,       # ghost calls: gap has to change by this many metres
     "off": [],                # kinds of call switched off
 }
 
@@ -135,8 +137,13 @@ class CrewChief:
     def __init__(self, tel: Telemetry, timing: Timing, units: str = "mph",
                  wide_m: float = 2.5, early_brake_m: float = 12.0, slow_apex_kmh: float = 6.0,
                  min_loss: float = 0.1, max_corner_calls: int = 2, consistency_s: float = 0.35,
-                 off: set[str] | None = None):
+                 off: set[str] | None = None, ghost_ref: int | None = None,
+                 ghost_gap_m: float = 5.0):
+        """ghost_ref: index of the ghost lap when the ghost is on. Corners are then
+        judged against the ghost (so the voice and the picture agree), and the
+        ghost-gap calls are made."""
         self.tel, self.tm = tel, timing
+        self.ghost_ref, self.ghost_gap_m = ghost_ref, ghost_gap_m
         self.units = units
         self.wide_m, self.early_brake_m = wide_m, early_brake_m
         self.slow_apex_kmh, self.min_loss = slow_apex_kmh, min_loss
@@ -153,13 +160,14 @@ class CrewChief:
 
     @classmethod
     def from_settings(cls, tel: Telemetry, timing: Timing, units: str = "mph",
-                      settings: dict | None = None) -> "CrewChief":
+                      settings: dict | None = None, ghost_ref: int | None = None) -> "CrewChief":
         s = dict(DEFAULTS)
         s.update({k: v for k, v in (settings or {}).items() if v is not None})
         return cls(tel, timing, units, wide_m=float(s["wide_m"]),
                    early_brake_m=float(s["early_brake_m"]), slow_apex_kmh=float(s["slow_corner_kmh"]),
                    min_loss=float(s["min_loss"]), max_corner_calls=int(s["max_corner_calls"]),
-                   consistency_s=float(s["consistency_s"]), off=set(s["off"] or ()))
+                   consistency_s=float(s["consistency_s"]), off=set(s["off"] or ()),
+                   ghost_ref=ghost_ref, ghost_gap_m=float(s["ghost_gap_m"]))
 
     # per-lap arrays against distance (metres), normalised to the best lap's length
     def _lap_profile(self, lap) -> dict:
@@ -247,10 +255,15 @@ class CrewChief:
                             at = lap.splits[i] if i < len(secs) - 1 else lap.t_end
                             out.append(Call(at + 0.6, f"Purple sector {words(i + 1)}.", "sector", 2, n))
 
-            # ---- corners, against the best lap so far
-            if k > 0 and self.corners and best_so_far is not None and \
-                    ({"corner", "good"} & self.on):
-                out += self._corner_calls(k, laps.index(best_so_far), grids)
+            # ---- corners, against the ghost when it's on, else the best lap so far
+            ghosted = self.ghost_ref is not None and k != self.ghost_ref
+            ref_i = self.ghost_ref if ghosted else (laps.index(best_so_far) if best_so_far else None)
+            mistakes = []
+            if self.corners and ref_i is not None and ref_i != k and ({"corner", "good"} & self.on):
+                mistakes = self._corner_calls(k, ref_i, grids)
+                out += mistakes
+            if ghosted and "ghost" in self.on and grids:
+                out += self._ghost_calls(k, grids, {c.corner for c in mistakes})
 
             # ---- top speed on this lap
             m = (self.tel.t >= lap.t_start) & (self.tel.t <= lap.t_end)
@@ -275,6 +288,8 @@ class CrewChief:
                     parts.append(f"{say_gap(gap).capitalize()} off your best.")
             if final_purple:
                 parts.append("Purple final sector.")
+            if ghosted and "ghost" in self.on:
+                parts.append(self._ghost_result(k))
             if secs:
                 best_sectors = list(secs) if best_sectors is None else \
                     [min(a, b) for a, b in zip(best_sectors, secs)]
@@ -311,6 +326,93 @@ class CrewChief:
             elif streak < 3:
                 streak_said = 0
         return sorted(out, key=lambda c: (c.t, c.priority))
+
+    # ------------------------------------------------------------ ghost
+
+    def _gap(self, k: int, t: float) -> float:
+        """Metres the ghost is ahead (+) or behind (-) at time t in lap k, as if
+        you'd both started the lap together."""
+        lap = self.laps[k]
+        el_k, d_k = self.tm._lap_profiles[k]
+        el_r, d_r = self.tm._lap_profiles[self.ghost_ref]
+        e = t - lap.t_start
+        where = float(np.interp(e, el_k, d_k)) / max(d_k[-1], 1.0) * d_r[-1]
+        if e <= el_r[-1]:
+            ghost_at = float(np.interp(e, el_r, d_r))
+        else:                       # the ghost has finished: keep it going at its finishing speed
+            ref = self.laps[self.ghost_ref]
+            v_end = float(np.interp(ref.t_end, self.tel.t, self.tel.speed_kmh)) / 3.6
+            ghost_at = d_r[-1] + (e - el_r[-1]) * v_end
+        return ghost_at - where
+
+    @staticmethod
+    def _metres(m: float) -> str:
+        n = max(1, int(round(abs(m))))
+        return "one metre" if n == 1 else f"{words(n)} metres"
+
+    def _ghost_result(self, k: int) -> str:
+        lap, ref = self.laps[k], self.laps[self.ghost_ref]
+        dt = lap.time - ref.time
+        v = float(np.interp(ref.t_end, self.tel.t, self.tel.speed_kmh)) / 3.6   # speed at the line
+        m = abs(dt) * v
+        if m < 1:
+            return "Dead level with the ghost at the line."
+        return f"Beat the ghost by {self._metres(m)}." if dt < 0 else \
+            f"The ghost beat you by {self._metres(m)}."
+
+    def _ghost_calls(self, k: int, grids: list[dict], skip_corners: set) -> list[Call]:
+        """Gap to the ghost: overtakes, corners where it changed, and updates at
+        the sector splits. At most one per sector, best first."""
+        lap = self.laps[k]
+        A = grids[k]
+        splits = list(lap.splits or [])
+        sector_of = lambda t: sum(1 for sp in splits if sp <= t)
+        cand = []                                       # (sector, rank, size, Call)
+        # overtakes, with a little hysteresis so GPS noise doesn't flip-flop
+        state = None
+        for t in np.arange(lap.t_start + 2.0, lap.t_end - 1.0, 0.2):
+            g = self._gap(k, float(t))
+            new = "ghost" if g > 1.5 else "you" if g < -1.5 else state
+            if state is not None and new != state:
+                text = "You're ahead of the ghost!" if new == "you" else "The ghost is back in front."
+                cand.append((sector_of(t), 0, 99, Call(float(t) + 0.3, text, "ghost", 2, lap.number)))
+            state = new
+        # corners where time was won or lost against the ghost (time, not metres:
+        # a metre gap shrinks in slow corners and stretches on straights by itself)
+        R = grids[self.ghost_ref]
+        for c in self.corners:
+            if c.number in skip_corners:
+                continue                               # a mistake call already covers it
+            i0 = int(max(c.s0 - 100, 0))
+            i1 = int(min(c.s1 + 30, len(A["s"]) - 1))
+            change = (A["t"][i1] - R["t"][i1]) - (A["t"][i0] - R["t"][i0])   # + = lost time
+            t1 = lap.t_start + float(A["t"][i1])
+            if abs(change) >= max(self.min_loss, 0.1):
+                text = (f"Lost {say_gap(change)} to the ghost through turn {words(c.number)}."
+                        if change > 0 else
+                        f"Gained {say_gap(change)} on the ghost through turn {words(c.number)}.")
+                cand.append((sector_of(t1), 1, abs(change) * 100, Call(t1 + 0.3, text, "ghost", 3,
+                                                                       lap.number, c.number)))
+        # where you stand at each split
+        last_said = 0.0
+        for i, sp in enumerate(splits):
+            g = self._gap(k, sp)
+            if i > 0 and abs(g - last_said) < self.ghost_gap_m:
+                continue
+            if abs(g) < 1.5:
+                text = "Level with the ghost."
+            elif g > 0:
+                text = f"Ghost {self._metres(g)} ahead."
+            else:
+                text = f"{self._metres(g).capitalize()} up on the ghost."
+            last_said = g
+            cand.append((i + 1, 2, abs(g), Call(sp + 1.2, text, "ghost", 3, lap.number)))
+        best = {}
+        for sec, rank, size, call in cand:
+            key = (rank, -size)
+            if sec not in best or key < best[sec][0]:
+                best[sec] = (key, call)
+        return [c for _, c in best.values()]
 
     def _cross_track(self, A: dict, R: dict, a: int, b: int) -> np.ndarray:
         """Sideways distance (m, + = right of travel) of lap A from the reference

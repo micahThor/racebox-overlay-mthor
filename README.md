@@ -181,6 +181,13 @@ under each call.
 - **Good news:** "Good braking into turn three, picked up two tenths."
 - **Top speed:** "New top speed, one eighteen."
 - **Consistency:** "Three laps within two tenths. Nice and consistent."
+- **Against the ghost** (when the ghost lap is on): where you stand at the
+  sector splits ("Ghost eight metres ahead", "Four metres up on the ghost"),
+  overtakes ("You're ahead of the ghost!"), corners where you won or lost
+  real time on it ("Lost two tenths to the ghost through turn six"), and the
+  margin at the line ("Beat the ghost by three metres"). While the ghost is
+  on, corner mistakes are also judged against the ghost lap, so the voice
+  and the picture always agree.
 
 Turn numbers are corners the app finds itself, counted from the
 start/finish line, so they may not match the track's official numbering.
@@ -199,9 +206,10 @@ commentator.
 | A corner mistake must cost at least | 0.1 s | `--min-loss 0.2` |
 | Most corner mistake calls per lap | 2 | `--max-corner-calls 1` |
 | Consistent laps: spread | 0.35 s | `--consistent-within 0.5` |
+| Ghost gap update: change since the last one | 5 m | (editor) |
 
 Any kind of call can be switched off: `--calls-off topspeed,consistency`
-(kinds: lap, sector, theoretical, corner, good, topspeed, consistency).
+(kinds: lap, sector, theoretical, corner, good, topspeed, consistency, ghost).
 In the editor these are sliders and switches in the Crew chief tab, and the
 list of calls updates as you move them, so you can see exactly what you'll
 hear before rendering. Each check is separate: if you raise the "wide"

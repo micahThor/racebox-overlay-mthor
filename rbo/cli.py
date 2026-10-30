@@ -274,8 +274,13 @@ def call_settings(args) -> dict:
     return s
 
 
-def chief(args, tel, tm):
-    return crewchief.CrewChief.from_settings(tel, tm, units=args.units, settings=call_settings(args))
+def chief(args, tel, tm, offset: float | None = None, duration: float | None = None):
+    ghost_ref = None
+    if getattr(args, "ghost", None) and offset is not None and duration is not None:
+        from .ghost import choose_ref
+        ghost_ref = choose_ref(tm, offset, duration)
+    return crewchief.CrewChief.from_settings(tel, tm, units=args.units, settings=call_settings(args),
+                                             ghost_ref=ghost_ref)
 
 
 def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: str,
@@ -285,7 +290,7 @@ def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: 
     if crewchief.tts_backend() is None:
         sys.exit("crew chief needs a speech engine: `say` (built into macOS) wasn't found")
     voice = getattr(args, "voice", None) or crewchief.default_voice()
-    calls = chief(args, tel, tm).calls()
+    calls = chief(args, tel, tm, offset, getattr(args, "_duration", None)).calls()
 
     def prog(i, n):
         if not quiet:
@@ -317,11 +322,13 @@ def cmd_calls(args):
     print(f"sync: {how}")
     start = parse_clock(args.start) if args.start else 0.0
     end = parse_clock(args.end) if args.end else vinfo["duration"]
+    args._duration = vinfo["duration"]
     if args.wav:
         placed = make_radio(args, tel, tm, offset, start, end, args.wav)
         print(f"wrote {args.wav}")
     else:
-        placed = [c for c in chief(args, tel, tm).calls() if start <= c.t - offset <= end]
+        placed = [c for c in chief(args, tel, tm, offset, vinfo["duration"]).calls()
+                  if start <= c.t - offset <= end]
         for c in placed:
             c.start = c.t
     for c in placed:
@@ -337,6 +344,7 @@ def cmd_render(args):
     out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
     print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
     radio = None
+    args._duration = vinfo["duration"]
     if args.crew_chief:
         import tempfile
         radio = str(Path(tempfile.mkdtemp()) / "crew_chief.wav")

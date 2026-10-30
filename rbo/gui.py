@@ -128,11 +128,12 @@ class Studio:
     # ------------------------------------------------------------ crew chief
 
     def _calls(self) -> list:
-        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings")], sort_keys=True)
+        g = self.ghost_cfg()
+        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings"), g], sort_keys=True)
         if getattr(self, "_calls_key", None) != key:
             self._calls_cache = crewchief.CrewChief.from_settings(
                 self.tel, self.tm, units=self.proj.get("units") or "mph",
-                settings=self.proj.get("call_settings")).calls()
+                settings=self.proj.get("call_settings"), ghost_ref=g["ref"] if g else None).calls()
             self._calls_key = key
         return self._calls_cache
 
