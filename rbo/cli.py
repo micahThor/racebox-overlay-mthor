@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import project, sync, telemetry, timing, video
+from . import crewchief, project, sync, telemetry, timing, video
 from .hud import Hud
 from .timing import fmt_time
 
@@ -45,7 +45,8 @@ def apply_project(args) -> None:
         if not args.session:
             sys.exit("no session given, and none saved for this video yet")
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
-    for k in ("units", "scale", "theme", "track", "sectors", "speed_max"):
+    for k in ("units", "scale", "theme", "track", "sectors", "speed_max",
+              "crew_chief", "voice", "voice_rate"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
@@ -241,15 +242,74 @@ def cmd_sync(args):
         print(f"saved to {project.save(args.video, proj)}")
 
 
+def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: str,
+               quiet: bool = False):
+    """Work out the crew chief calls for video times start..end and write the
+    radio track. Returns the calls that were placed."""
+    if crewchief.tts_backend() is None:
+        sys.exit("crew chief needs a speech engine: `say` (built into macOS) wasn't found")
+    voice = getattr(args, "voice", None) or crewchief.default_voice()
+    calls = crewchief.CrewChief(tel, tm, units=args.units).calls()
+
+    def prog(i, n):
+        if not quiet:
+            print(f"\r  recording crew chief calls {i}/{n}", end="", flush=True)
+
+    track, placed = crewchief.build_track(calls, start + offset, end + offset, voice=voice,
+                                          rate=int(getattr(args, "voice_rate", None) or 190),
+                                          progress=prog)
+    if not quiet:
+        print()
+    crewchief.write_wav(out_wav, track)
+    return placed
+
+
+def cmd_voices(args):
+    vs = crewchief.list_voices()
+    if vs:
+        print("\n".join(vs))
+        print(f"\ndefault: {crewchief.default_voice()}")
+    else:
+        print("no `say` voices found; they're built into macOS")
+
+
+def cmd_calls(args):
+    apply_project(args)
+    vinfo = video.probe(args.video)
+    tel, tm = load_session(args)
+    offset, how = resolve_offset(args, tel, tm, vinfo)
+    print(f"sync: {how}")
+    start = parse_clock(args.start) if args.start else 0.0
+    end = parse_clock(args.end) if args.end else vinfo["duration"]
+    if args.wav:
+        placed = make_radio(args, tel, tm, offset, start, end, args.wav)
+        print(f"wrote {args.wav}")
+    else:
+        placed = [c for c in crewchief.CrewChief(tel, tm, units=args.units).calls()
+                  if start <= c.t - offset <= end]
+        for c in placed:
+            c.start = c.t
+    for c in placed:
+        print(f"  {clock(c.start - offset):>10}  {c.text}")
+    if not placed:
+        print("  no calls in this part of the video")
+
+
 def cmd_render(args):
     vinfo, tel, tm, offset, hud = _setup(args)
     start = parse_clock(args.start) if args.start else 0.0
     end = parse_clock(args.end) if args.end else None
     out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
     print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
+    radio = None
+    if args.crew_chief:
+        import tempfile
+        radio = str(Path(tempfile.mkdtemp()) / "crew_chief.wav")
+        placed = make_radio(args, tel, tm, offset, start, end or vinfo["duration"], radio)
+        print(f"  {len(placed)} crew chief calls")
     try:
         video.render(args.video, hud, offset, out, start, end, args.codec, args.bitrate, args.quality,
-                     workers=args.workers)
+                     workers=args.workers, radio=radio)
     except video.RenderError as e:
         sys.exit(str(e))
 
@@ -298,6 +358,11 @@ def main(argv=None):
         s.add_argument("--theme", help="carbon, daylight, neon, minimal, or a theme .json file")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",
                        help="top of the speedometer scale (default 70 mph / 120 km/h)")
+        r = p.add_argument_group("crew chief radio")
+        r.add_argument("--crew-chief", action=argparse.BooleanOptionalAction, default=None,
+                       help="add spoken crew chief calls to the video's audio")
+        r.add_argument("--voice", help="macOS voice name (see: racebox-overlay voices)")
+        r.add_argument("--voice-rate", type=int, default=None, help="words per minute (default 190)")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
         s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
         p.add_argument("-o", "--output")
@@ -317,6 +382,16 @@ def main(argv=None):
     video_opts(p)
     p.add_argument("--save", action="store_true", help="save the result next to the video")
     p.set_defaults(fn=cmd_sync)
+
+    p = sub.add_parser("calls", help="list the crew chief calls, or save them as audio")
+    video_opts(p)
+    p.add_argument("--start", help="from this video time")
+    p.add_argument("--end", help="to this video time")
+    p.add_argument("--wav", metavar="FILE", help="also save the radio track as a WAV to listen to")
+    p.set_defaults(fn=cmd_calls)
+
+    p = sub.add_parser("voices", help="list the English macOS voices for the crew chief")
+    p.set_defaults(fn=cmd_voices)
 
     p = sub.add_parser("gui", help="open the sync & layout editor in your browser")
     p.add_argument("video")

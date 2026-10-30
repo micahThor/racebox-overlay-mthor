@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import project, sync, telemetry, timing, video
+from . import crewchief, project, sync, telemetry, timing, video
 from .hud import Hud
 from .themes import THEMES
 from .timing import fmt_time
@@ -107,7 +107,42 @@ class Studio:
             "themes": [{"id": k, "label": t.get("label", k.title()),
                         "swatch": [list(t.get(c, THEMES["carbon"][c])) for c in ("bg", "text", "accent")]}
                        for k, t in THEMES.items()],
+            "speech": {"available": crewchief.tts_backend() is not None,
+                       "engine": crewchief.tts_backend(),
+                       "voices": crewchief.list_voices(),
+                       "default_voice": crewchief.default_voice()},
         }
+
+    # ------------------------------------------------------------ crew chief
+
+    def _calls(self) -> list:
+        key = json.dumps([self.proj.get("units")])
+        if getattr(self, "_calls_key", None) != key:
+            self._calls_cache = crewchief.CrewChief(self.tel, self.tm,
+                                                    units=self.proj.get("units") or "mph").calls()
+            self._calls_key = key
+        return self._calls_cache
+
+    def calls(self) -> list[dict]:
+        off = self.t0 + float(self.proj["offset"])
+        D = self.vinfo["duration"]
+        return [{"i": i, "vt": c.t - off, "text": c.text, "kind": c.kind}
+                for i, c in enumerate(self._calls()) if 0 <= c.t - off <= D]
+
+    def call_audio(self, i: int) -> bytes:
+        c = self._calls()[i]
+        audio = crewchief.radioize(crewchief.synthesize(
+            c.text, self.proj.get("voice") or crewchief.default_voice(),
+            int(self.proj.get("voice_rate") or 190)))
+        buf = io.BytesIO()
+        import wave
+        pcm = (audio.clip(-1, 1) * 32767).astype("<i2")
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(crewchief.RATE)
+            w.writeframes(pcm.tobytes())
+        return buf.getvalue()
 
     def _panel_keys(self) -> list[dict]:
         names = []
@@ -148,7 +183,8 @@ class Studio:
                             "in_data": inside}}
 
     def update_project(self, changes: dict) -> dict:
-        allowed = {"offset", "theme", "units", "scale", "layout", "speed_max"}
+        allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
+                   "crew_chief", "voice", "voice_rate"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -194,10 +230,25 @@ class Studio:
                         speed_max=self.proj.get("speed_max"))
 
                 def prog(i, n, rate):
-                    self.render_state.update(done=i, total=n, fps=rate)
+                    self.render_state.update(done=i, total=n, fps=rate, stage="frames")
 
-                video.render(self.video_path, h, self.t0 + float(self.proj["offset"]), out,
-                             start or 0.0, end, progress=prog, cancel=self._cancel)
+                off = self.t0 + float(self.proj["offset"])
+                s0, s1 = start or 0.0, end or self.vinfo["duration"]
+                radio = None
+                if self.proj.get("crew_chief"):
+                    import tempfile
+                    radio = str(Path(tempfile.mkdtemp()) / "crew_chief.wav")
+
+                    def vprog(i, n):
+                        self.render_state.update(done=i, total=n, stage="voice")
+                    track, placed = crewchief.build_track(
+                        self._calls(), s0 + off, s1 + off,
+                        voice=self.proj.get("voice") or crewchief.default_voice(),
+                        rate=int(self.proj.get("voice_rate") or 190), progress=vprog)
+                    crewchief.write_wav(radio, track)
+                    self.render_state["calls"] = len(placed)
+                video.render(self.video_path, h, off, out, s0, end, progress=prog,
+                             cancel=self._cancel, radio=radio)
                 self.render_state["state"] = "done"
             except Exception as e:  # noqa: BLE001 - surfaced to the UI
                 self.render_state.update(state="error", error=str(e))
@@ -249,6 +300,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.studio.hud_frame(float(q["vt"][0]), int(float(q.get("pw", ["960"])[0]))))
             elif u.path == "/api/render":
                 self._json(self.studio.render_state)
+            elif u.path == "/api/calls":
+                self._json(self.studio.calls())
+            elif u.path == "/api/call-audio":
+                body = self.studio.call_audio(int(q["i"][0]))
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_error(404)
         except (BrokenPipeError, ConnectionResetError):

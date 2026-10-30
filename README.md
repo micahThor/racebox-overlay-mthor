@@ -146,6 +146,48 @@ Keys: Space plays/pauses, Left/Right step one frame, Shift+Left/Right one
 second. The GO 3S can record H.265; Safari and Chrome on a Mac play it, but
 if the video won't load in your browser, switch the camera to H.264.
 
+## Crew chief radio
+
+Adds a race engineer on the radio to your video: short spoken calls at the
+right moments, with a team-radio sound, and the bike's own audio dipping
+under each call.
+
+- **Every lap:** "Lap four, one twenty-nine eight. Purple lap, three tenths
+  quicker." or "Just a tenth off."
+- **Purple sectors:** "Purple sector two."
+- **Theoretical best:** "There's a one twenty-nine flat in you."
+- **Mistakes, compared with your best lap so far, only when they cost time:**
+  "Wide at turn five, cost you two tenths.", "Braked early into turn three,
+  half a second lost.", "Turn two, carried twelve miles an hour less."
+  Running wide is always mentioned, even when it cost nothing.
+- **Good news:** "Good braking into turn three, picked up two tenths."
+- **Top speed:** "New top speed, one eighteen."
+- **Consistency:** "Three laps within two tenths. Nice and consistent."
+
+Turn numbers are corners the app finds itself, counted from the
+start/finish line, so they may not match the track's official numbering.
+A corner is only called out if you ran 2.5 m or more wide, braked 12 m or
+more earlier, or carried noticeably less speed through it. At most two
+mistakes are called per lap, so it stays a crew chief rather than a
+commentator.
+
+Turn it on with the switch in the editor's **Crew chief** tab (where you can
+also pick the voice, set the speed, see every call and play each one), or
+from the command line:
+
+```bash
+racebox-overlay calls VID.mp4 session.csv              # list the calls with their video times
+racebox-overlay calls VID.mp4 --wav radio.wav          # hear the radio track on its own
+racebox-overlay render VID.mp4 --crew-chief            # add it to the video
+racebox-overlay voices                                 # the voices on your Mac
+```
+
+The voice is macOS's built-in `say`, so it's free and works offline. It uses
+"Daniel" (British English) if installed, otherwise your Mac's default; choose
+another with `--voice` or in the editor. More voices can be downloaded in
+System Settings → Accessibility → Spoken Content → System voice → Manage
+Voices.
+
 ## Themes
 
 Four built in: **carbon** (dark cards, default), **daylight** (light cards
@@ -170,6 +212,8 @@ of the `.overlay.json`.
 | `--theme neon` | carbon, daylight, neon, minimal, or a theme `.json` |
 | `--speed-max 80` | top of the speedometer (default 70 mph / 120 km/h) |
 | `--workers 4` | CPU cores drawing the overlay (default: all but one) |
+| `--crew-chief` / `--no-crew-chief` | spoken crew chief calls in the audio |
+| `--voice Daniel` | which macOS voice the crew chief uses |
 | `--scale 1.2` | make the HUD bigger or smaller |
 | `--hide map,gforce` | drop panels (`laps`, `map`, `speed`, `gforce`) |
 | `--sectors 4` | auto-split laps into N equal-distance sectors (default 3, 0 = off) |
@@ -212,6 +256,9 @@ session at that track with `--track mytrack.json`. See
 - `rbo/gui.py` + `gui.html` — the editor: a small local web server that
   streams the video to your browser and draws overlay frames on request,
   using the same drawing code as the final render.
+- `rbo/crewchief.py` — finds corners on your best lap, compares each lap with
+  it (time, line, braking point, corner speed), turns findings into calls,
+  speaks them, adds the radio sound and schedules them so none overlap.
 - `rbo/themes.py`, `rbo/project.py` — themes, and the per-video settings file.
 - `rbo/video.py` — ffmpeg crops the panels back out, overlays them, and
   encodes with VideoToolbox, copying the original audio.
@@ -220,3 +267,5 @@ session at that track with `--track mytrack.json`. See
 
 - Lap comparison (ghost of best lap on the map, delta graph).
 - Join split recordings (long sessions spanning several video files).
+- Live crew chief calls in your helmet while riding (needs a live Bluetooth
+  link to the RaceBox and a phone app).

@@ -88,7 +88,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 0
 aside { border-left: 1px solid var(--line); background: var(--surface); display: flex;
   flex-direction: column; min-height: 0; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
-.tabs button { flex: 1; border: 0; border-radius: 0; background: none; padding: 12px; color: var(--muted);
+.tabs button { flex: 1; border: 0; border-radius: 0; background: none; padding: 12px 4px; color: var(--muted);
+  white-space: nowrap; font-size: 14px;
   border-bottom: 2px solid transparent; font-weight: 500; }
 .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--amber); }
 .pane { padding: 18px; overflow: auto; flex: 1; display: none; }
@@ -135,6 +136,29 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 .bar i { display: block; height: 100%; width: 0; background: var(--amber); }
 .render .status { font-size: 13px; color: var(--muted); word-break: break-all; }
 
+/* crew chief */
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px;
+  cursor: pointer; width: 100%; text-align: left; }
+.switch .knob { position: relative; width: 46px; height: 26px; border-radius: 13px; background: var(--line);
+  flex: none; transition: background .15s; }
+.switch .knob::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--text); transition: transform .15s; }
+.switch[aria-checked="true"] .knob { background: var(--amber); }
+.switch[aria-checked="true"] .knob::after { transform: translateX(20px); background: var(--amber-ink); }
+.switch b { font-weight: 600; display: block; }
+.switch small { color: var(--muted); font-size: 13px; }
+.cc-body.off { opacity: .45; }
+.calls { list-style: none; margin: 0; padding: 0; }
+.calls li { display: grid; grid-template-columns: 62px 1fr 34px; gap: 8px; align-items: start;
+  padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.calls .t { font-family: var(--num); font-size: 16px; color: var(--amber); background: none; border: 0;
+  padding: 0; text-align: left; }
+.calls .play { padding: 2px 0; width: 34px; font-size: 13px; }
+.calls .k { color: var(--muted); font-size: 12px; display: block; }
+.callmark { position: absolute; bottom: 2px; width: 2px; height: 7px; background: var(--amber);
+  opacity: .8; pointer-events: none; }
+
 @media (max-width: 900px) {
   body { height: auto; display: block; }
   main { grid-template-columns: 1fr; }
@@ -177,6 +201,7 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
     <div class="tabs" role="tablist">
       <button role="tab" aria-selected="true" data-tab="sync">Sync</button>
       <button role="tab" aria-selected="false" data-tab="look">Look &amp; layout</button>
+      <button role="tab" aria-selected="false" data-tab="cc">Crew chief</button>
     </div>
 
     <div class="pane on" id="pane-sync">
@@ -229,6 +254,25 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
       <p>Drag panels on the video to move them.</p>
       <div id="panelList"></div>
       <div class="row" style="margin-top:12px"><button id="resetLayout">Reset layout</button></div>
+    </div>
+
+    <div class="pane" id="pane-cc">
+      <button class="switch" id="ccSwitch" role="switch" aria-checked="false">
+        <span><b>Crew chief radio</b><small id="ccState">Off: the render has no voice-over</small></span>
+        <span class="knob" aria-hidden="true"></span>
+      </button>
+      <p style="margin-top:10px">A race engineer on the radio: lap times, purple laps and sectors, running
+        wide, braking early, slow corners, top speeds and consistent runs.</p>
+      <div class="cc-body" id="ccBody">
+        <h2>Voice</h2>
+        <div class="row"><select id="ccVoice" aria-label="Voice" style="flex:1"></select></div>
+        <h2>Speaking speed</h2>
+        <div class="row"><input type="range" id="ccRate" min="150" max="240" step="5" style="flex:1">
+          <span class="pct" id="ccRateV"></span></div>
+        <h2>Calls in this video</h2>
+        <p>Click a time to jump there, or play a call to hear it.</p>
+        <ul class="calls" id="ccList"></ul>
+      </div>
     </div>
 
     <div class="render">
@@ -343,6 +387,7 @@ async function save(changes) {
   } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
   if ("offset" in changes) { S.offset_source = "set by you"; }
   renderSync(); renderTimeline(); refreshHud();
+  if ("offset" in changes || "units" in changes) loadCalls();
 }
 
 /* ---------- transport & timeline ---------- */
@@ -511,6 +556,65 @@ document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click",
   document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + b.dataset.tab));
 }));
 
+/* ---------- crew chief ---------- */
+let CALLS = [];
+const KIND = { lap: "Lap", sector: "Sector", corner: "Corner", topspeed: "Top speed", consistency: "Consistency" };
+async function loadCalls() {
+  CALLS = await api("/api/calls");
+  const ul = $("#ccList"); ul.innerHTML = "";
+  if (!CALLS.length) { ul.innerHTML = '<li style="display:block;color:var(--muted)">No calls fall inside this video with the current sync.</li>'; }
+  for (const c of CALLS) {
+    const li = document.createElement("li");
+    li.innerHTML = `<button class="t" title="Jump here">${fmtShort(c.vt)}</button>
+      <span>${c.text}<span class="k">${KIND[c.kind] || c.kind}</span></span>
+      <button class="play" title="Play this call" aria-label="Play call">▶</button>`;
+    li.querySelector(".t").addEventListener("click", () => seek(c.vt - 1));
+    li.querySelector(".play").addEventListener("click", e => playCall(c.i, e.currentTarget));
+    ul.appendChild(li);
+  }
+  renderCallMarks();
+}
+let audioEl = null;
+function playCall(i, btn) {
+  if (audioEl) { audioEl.pause(); }
+  btn.textContent = "…";
+  audioEl = new Audio(`/api/call-audio?i=${i}&v=${encodeURIComponent(P.voice || "")}&r=${P.voice_rate || 190}`);
+  audioEl.addEventListener("playing", () => btn.textContent = "■");
+  audioEl.addEventListener("ended", () => btn.textContent = "▶");
+  audioEl.addEventListener("error", () => btn.textContent = "!");
+  audioEl.play().catch(() => {});
+}
+function renderCallMarks() {
+  tl.querySelectorAll(".callmark").forEach(e => e.remove());
+  if (!P.crew_chief) return;
+  for (const c of CALLS) {
+    const m = document.createElement("div"); m.className = "callmark";
+    m.style.left = (c.vt / S.video.duration * 100) + "%";
+    tl.insertBefore(m, $("#playhead"));
+  }
+}
+function renderCC() {
+  const on = !!P.crew_chief;
+  $("#ccSwitch").setAttribute("aria-checked", on);
+  $("#ccState").textContent = on ? "On: calls are mixed into the rendered video" : "Off: the render has no voice-over";
+  $("#ccBody").classList.toggle("off", !on);
+  const sel = $("#ccVoice");
+  if (!S.speech.available) {
+    sel.innerHTML = "<option>No speech engine found</option>"; sel.disabled = true;
+  } else if (!S.speech.voices.length) {
+    sel.innerHTML = `<option>Built-in voice (${S.speech.engine})</option>`; sel.disabled = true;
+  } else {
+    sel.innerHTML = S.speech.voices.map(v => `<option>${v}</option>`).join("");
+    sel.value = P.voice || S.speech.default_voice;
+  }
+  $("#ccRate").value = P.voice_rate || 190; $("#ccRateV").textContent = (P.voice_rate || 190) + " wpm";
+  renderCallMarks();
+}
+$("#ccSwitch").addEventListener("click", () => { save({ crew_chief: !P.crew_chief }); renderCC(); });
+$("#ccVoice").addEventListener("change", e => save({ voice: e.target.value }));
+$("#ccRate").addEventListener("input", e => $("#ccRateV").textContent = e.target.value + " wpm");
+$("#ccRate").addEventListener("change", e => save({ voice_rate: +e.target.value }));
+
 /* ---------- render ---------- */
 let polling = null;
 $("#renderBtn").addEventListener("click", async () => {
@@ -531,8 +635,10 @@ function showRender(st) {
   bar.firstElementChild.style.width = (st.state === "done" ? 100 : pct) + "%";
   if (running) {
     const eta = st.fps ? (st.total - st.done) / st.fps : 0;
-    status.textContent = st.total ? `Frame ${st.done} of ${st.total}, ${st.fps.toFixed(0)} fps, about ${Math.ceil(eta / 60)} min left` : "Starting…";
-  } else if (st.state === "done") status.textContent = "Rendered " + st.out;
+    status.textContent = st.stage === "voice" ? `Recording crew chief calls, ${st.done} of ${st.total}`
+      : st.total ? `Frame ${st.done} of ${st.total}, ${st.fps.toFixed(0)} fps, about ${Math.ceil(eta / 60)} min left` : "Starting…";
+  } else if (st.state === "done") status.textContent = "Rendered " + st.out +
+    (st.calls !== undefined ? ` with ${st.calls} crew chief calls` : "");
   else if (st.state === "error") status.textContent = st.error;
   else status.textContent = "";
   if (!running && polling) { clearInterval(polling); polling = null; }
@@ -556,7 +662,7 @@ function showRender(st) {
     const l = S.data.laps.find(x => x.n === +tr.dataset.lap); seek(Math.max(l.start - P.offset, 0));
   }));
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
-  renderSync(); renderLook(); renderTimeline();
+  renderSync(); renderLook(); renderTimeline(); renderCC(); loadCalls();
   showRender(await api("/api/render"));
   refreshHud();
 })();

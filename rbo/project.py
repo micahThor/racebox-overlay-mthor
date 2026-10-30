@@ -13,7 +13,10 @@ still win over anything in the file.
       "speed_max": 70,              top of the speedometer (null = 70 mph / 120 km/h)
       "layout": {"map": {"x": 0.38, "y": 0.62, "scale": 1.3}, "speed": {"visible": false}},
       "track": null,
-      "sectors": 3
+      "sectors": 3,
+      "crew_chief": true,           add spoken crew chief calls to the render
+      "voice": "Daniel",            a macOS voice (null = Daniel if installed)
+      "voice_rate": 190             words per minute
     }
 """
 from __future__ import annotations
@@ -22,7 +25,8 @@ import json
 from pathlib import Path
 
 DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
-            "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None}
+            "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None,
+            "crew_chief": False, "voice": None, "voice_rate": 190}
 
 
 def path_for(video: str | Path) -> Path:

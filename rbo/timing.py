@@ -87,7 +87,10 @@ class Timing:
 
         self.lat0, self.lon0 = float(np.mean(tel.lat)), float(np.mean(tel.lon))
         self.x, self.y = enu(tel.lat, tel.lon, self.lat0, self.lon0)
-        step = np.hypot(np.diff(self.x), np.diff(self.y))
+        kk = 5                                          # smooth out GPS jitter first
+        sx = np.convolve(np.pad(self.x, kk // 2, mode="edge"), np.ones(kk) / kk, mode="valid")
+        sy = np.convolve(np.pad(self.y, kk // 2, mode="edge"), np.ones(kk) / kk, mode="valid")
+        step = np.hypot(np.diff(sx), np.diff(sy))
         self.dist = np.concatenate([[0.0], np.cumsum(step)])
 
         self.start_gate: Gate | None = self._start_gate()

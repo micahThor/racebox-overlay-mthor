@@ -99,6 +99,16 @@ def encoder_args(codec: str, width: int, height: int, fps: float, bitrate: str |
 _HUD = None
 
 
+def _radio_mix(has_audio: bool) -> list[str]:
+    """Filter graph: radio calls over the video's audio, which ducks under them."""
+    if not has_audio:
+        return ["[2:a]aresample=48000,apad[aout]"]
+    return ["[0:a]aresample=48000,aformat=channel_layouts=stereo[eng]",
+            "[2:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[vox][key]",
+            "[eng][key]sidechaincompress=threshold=0.02:ratio=3:attack=15:release=350:makeup=1[duck]",
+            "[duck][vox]amix=inputs=2:duration=first:normalize=0[aout]"]
+
+
 def _init_worker(spec: dict) -> None:
     global _HUD
     _HUD = Hud(**spec)
@@ -115,8 +125,10 @@ def default_workers() -> int:
 def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
            end: float | None = None, codec: str = "h264", bitrate: str | None = None,
            quality: str = "fast", progress=None, cancel: threading.Event | None = None,
-           workers: int | None = None) -> None:
-    """progress(done, total, fps) is called every ~60 frames (default: print).
+           workers: int | None = None, radio: str | None = None) -> None:
+    """radio: a WAV starting at the clip's start (the crew chief track) to mix
+    over the video's audio, which dips under each call.
+    progress(done, total, fps) is called every ~60 frames (default: print).
     Setting `cancel` stops the render early. Overlay frames are drawn on
     `workers` processes in parallel (default: one per CPU core, minus one)."""
     info = probe(video)
@@ -145,8 +157,12 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
            "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", video,
            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{hud.atlas_w}x{hud.atlas_h}",
            "-r", f"{fps.numerator}/{fps.denominator}", "-i", "pipe:0",
-           "-filter_complex", ";".join(parts), "-map", "[vout]"]
-    if info["has_audio"]:
+           *(["-i", radio] if radio else []),
+           "-filter_complex", ";".join(parts + _radio_mix(info["has_audio"]) if radio else parts),
+           "-map", "[vout]"]
+    if radio:
+        cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
+    elif info["has_audio"]:
         cmd += ["-map", "0:a:0", "-c:a", "copy"]
     cmd += encoder_args(codec, info["width"], info["height"], float(fps), bitrate, quality)
     cmd += ["-movflags", "+faststart", "-shortest", out]
