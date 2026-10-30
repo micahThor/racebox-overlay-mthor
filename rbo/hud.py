@@ -25,6 +25,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from .telemetry import Telemetry
 from .themes import load_theme
+from .ghost import GhostState, ghost_state
 from .timing import HudState, Timing, fmt_time
 
 PANEL_NAMES = ("laps", "map", "speed", "gforce")   # "gforce" shows lean for bikes
@@ -89,13 +90,15 @@ class Hud:
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
                  hide: set[str] | None = None, theme: str | dict | None = None,
                  layout: dict | None = None, speed_max: float | None = None,
-                 supersample: int = 2):
+                 supersample: int = 2, ghost: dict | None = None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
         self.spec = dict(tel=tel, timing=timing, width=width, height=height, units=units,
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
-                         speed_max=speed_max, supersample=supersample)
+                         speed_max=speed_max, supersample=supersample, ghost=ghost)
+        # ghost: {"ref": lap index, "offset": s, "duration": s} or None for no ghost panel
+        self.ghost = ghost if ghost and ghost.get("ref") is not None else None
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
@@ -271,6 +274,8 @@ class Hud:
             specs.append(("gforce", "gforce", 290, 312, "br", self._draw_g))
         elif self.has_lean:
             specs.append(("gforce", "lean", 380, 262, "br", self._draw_lean))
+        if self.ghost:
+            specs.append(("ghost", "ghost", 480, 302, "tc" if W >= H else "mc", self._draw_ghost))
 
         panels = []
         for key, name, rw, rh, corner, fn in specs:
@@ -283,8 +288,8 @@ class Hud:
             if "x" in cfg and "y" in cfg:
                 px, py = float(cfg["x"]) * W, float(cfg["y"]) * H
             else:
-                px = m if corner[1] == "l" else W - m - w
-                py = m if corner[0] == "t" else H - m - h
+                px = m if corner[1] == "l" else W - m - w if corner[1] == "r" else (W - w) / 2
+                py = m if corner[0] == "t" else H - m - h if corner[0] == "b" else H * 0.40
             px = int(round(min(max(px, 0), max(W - w, 0))))
             py = int(round(min(max(py, 0), max(H - h, 0))))
             panels.append(Panel(name, key, px, py, w, h, k=k_out * self.ss, ss=self.ss, draw=fn))
@@ -308,7 +313,8 @@ class Hud:
             if p.name == "none":
                 continue
             self._use(p)
-            self.card(img, d, p)
+            if p.name != "ghost":          # the ghost's card only shows while it's active
+                self.card(img, d, p)
             getattr(self, f"_static_{p.name}", lambda *a: None)(img, d, p)
         return img
 
@@ -475,9 +481,16 @@ class Hud:
             img = img.reduce(self.ss)
         return img
 
-    def compose(self, frame: Image.Image, t: float) -> Image.Image:
-        """Paste the panels onto a full video frame (used for previews)."""
+    def compose(self, frame: Image.Image, t: float, ghost_frame=None) -> Image.Image:
+        """Paste the panels onto a full video frame (used for previews).
+        ghost_frame(video_time, w, h) -> RGB array, used when the ghost is showing."""
         atlas = self.render_atlas(t)
+        g = self.ghost_info(t)
+        if g.active and ghost_frame is not None:
+            _, _, w, h = self.ghost_slot()
+            arr = np.array(atlas)
+            self.paste_ghost(arr, ghost_frame(g.ref_vt, w, h))
+            atlas = Image.fromarray(arr, "RGBA")
         out = frame.convert("RGBA")
         for p in self.panels:
             out.alpha_composite(atlas.crop((0, p.ay, p.w, p.ay + p.h)), (p.x, p.y))
@@ -590,6 +603,67 @@ class Hud:
         d.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=fg)
         self._sprites[key] = im
         return im
+
+    # ------------------------------------------------------------ ghost lap
+
+    GHOST_SLOT = (8, 8, 464, 261)            # video area inside the panel, reference px
+
+    def ghost_info(self, t: float) -> GhostState:
+        g = self.ghost
+        if not g:
+            return GhostState(False)
+        return ghost_state(self.timing, g["ref"], g["offset"], g["duration"], t)
+
+    def ghost_slot(self) -> tuple[int, int, int, int] | None:
+        """(x, y, w, h) of the ghost video inside the atlas, output pixels."""
+        p = next((p for p in self.panels if p.name == "ghost"), None)
+        if p is None:
+            return None
+        k = p.k / self.ss
+        x, y, w, h = self.GHOST_SLOT
+        return (int(round(x * k)), p.ay + int(round(y * k)), int(round(w * k)) // 2 * 2,
+                int(round(h * k)) // 2 * 2)
+
+    def ghost_mask(self) -> np.ndarray:
+        """Rounded-corner mask for the ghost video (cached), 0..1."""
+        slot = self.ghost_slot()
+        key = ("gmask", slot)
+        if key not in self._sprites:
+            _, _, w, h = slot
+            m = Image.new("L", (w, h), 0)
+            ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1],
+                                                radius=max(2, int(8 * self.base_k)), fill=255)
+            self._sprites[key] = np.asarray(m, np.float32)[..., None] / 255
+        return self._sprites[key]
+
+    def paste_ghost(self, atlas: np.ndarray, frame: np.ndarray) -> None:
+        """Put a ghost video frame (h x w x 3) into an RGBA atlas array in place."""
+        x, y, w, h = self.ghost_slot()
+        m = self.ghost_mask()
+        region = atlas[y:y + h, x:x + w]
+        region[..., :3] = (frame[:h, :w] * m + region[..., :3] * (1 - m)).astype(np.uint8)
+        region[..., 3] = np.maximum(region[..., 3], (m[..., 0] * 255).astype(np.uint8))
+
+    def _draw_ghost(self, img, d, p, t, st):
+        g = self.ghost_info(t)
+        if not g.active:
+            return
+        S = self.S
+        r = S(12)
+        d.rounded_rectangle([0, p.iay, p.iw - 1, p.iay + p.ih - 1], radius=r,
+                            fill=self.C["bg"] if self._has_card() else (0, 0, 0, 170),
+                            outline=self.C["accent"], width=max(2, S(3)))
+        y = p.iay + p.ih - S(11)
+        w = self.text(d, S(14), y, "GHOST", 14, "accent", track=2)
+        self.text(d, S(14) + w + S(10), y, f"BEST LAP {g.ref_number}  {fmt_time(g.ref_time)}", 15, "dim",
+                  track=1)
+        gap = g.gap_m
+        if abs(gap) < 0.5:
+            label, col = "LEVEL", "white"
+        else:
+            label = f"{abs(gap):.0f} M {'AHEAD' if gap > 0 else 'BEHIND'}"
+            col = "red" if gap > 0 else "green"
+        self.text(d, p.iw - S(14), y, label, 16, col, "r", track=1)
 
     def _draw_map(self, img, d, p, t, st):
         x = float(np.interp(t, self.tel.t, self.timing.x))

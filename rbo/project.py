@@ -14,6 +14,7 @@ still win over anything in the file.
       "layout": {"map": {"x": 0.38, "y": 0.62, "scale": 1.3}, "speed": {"visible": false}},
       "track": null,
       "sectors": 3,
+      "ghost": true,                picture-in-picture of your best lap, matched by position
       "crew_chief": true,           add spoken crew chief calls to the render
       "voice": "Daniel",            a macOS voice (null = Daniel if installed)
       "voice_rate": 190,            words per minute
@@ -31,7 +32,8 @@ from pathlib import Path
 
 DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None,
-            "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {}}
+            "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {},
+            "ghost": False}
 
 
 def path_for(video: str | Path) -> Path:

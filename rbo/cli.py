@@ -12,6 +12,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from . import crewchief, project, sync, telemetry, timing, video
 from .hud import Hud
 from .timing import fmt_time
@@ -46,7 +48,7 @@ def apply_project(args) -> None:
             sys.exit("no session given, and none saved for this video yet")
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
     for k in ("units", "scale", "theme", "track", "sectors", "speed_max",
-              "crew_chief", "voice", "voice_rate", "call_settings"):
+              "crew_chief", "voice", "voice_rate", "call_settings", "ghost"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
@@ -200,10 +202,20 @@ def _setup(args):
     tel, tm = load_session(args)
     offset, how = resolve_offset(args, tel, tm, vinfo)
     hide = set(filter(None, (args.hide or "").split(",")))
+    ghost_cfg = None
+    if args.ghost:
+        from .ghost import choose_ref
+        ref = choose_ref(tm, offset, vinfo["duration"])
+        if ref is None:
+            print("ghost: no complete lap in this video to use as the ghost, so it's off")
+        else:
+            ghost_cfg = {"ref": ref, "offset": offset, "duration": vinfo["duration"]}
+            print(f"ghost: lap {tm.laps[ref].number} ({fmt_time(tm.laps[ref].time)}), "
+                  "your fastest lap in this video")
     try:
         hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
-                  speed_max=args.speed_max)
+                  speed_max=args.speed_max, ghost=ghost_cfg)
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -223,7 +235,8 @@ def cmd_preview(args):
     base = Path(args.output or "preview.png")
     for i, vt in enumerate(times):
         frame = video.grab_frame(args.video, vt)
-        img = hud.compose(frame, vt + offset)
+        img = hud.compose(frame, vt + offset, ghost_frame=lambda gvt, w, h: np.asarray(
+            video.grab_frame(args.video, gvt).resize((w, h))))
         out = base if len(times) == 1 else base.with_name(f"{base.stem}_{i + 1}{base.suffix}")
         img.save(out)
         print(f"  {clock(vt)} -> {out}")
@@ -378,6 +391,8 @@ def main(argv=None):
         s.add_argument("--units", choices=["mph", "kmh"], default=None, help="default mph")
         s.add_argument("--scale", type=float, default=None, help="HUD size multiplier")
         s.add_argument("--theme", help="carbon, daylight, neon, minimal, or a theme .json file")
+        s.add_argument("--ghost", action=argparse.BooleanOptionalAction, default=None,
+                       help="picture-in-picture of your best lap, matched to your position")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",
                        help="top of the speedometer scale (default 70 mph / 120 km/h)")
         r = p.add_argument_group("crew chief radio")

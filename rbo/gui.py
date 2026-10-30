@@ -70,10 +70,18 @@ class Studio:
     def save(self) -> str:
         return str(project.save(self.video_path, self.proj))
 
+    def ghost_cfg(self) -> dict | None:
+        if not self.proj.get("ghost"):
+            return None
+        from .ghost import choose_ref
+        off = self.t0 + float(self.proj["offset"])
+        ref = choose_ref(self.tm, off, self.vinfo["duration"])
+        return None if ref is None else {"ref": ref, "offset": off, "duration": self.vinfo["duration"]}
+
     def hud(self, width: int, height: int) -> Hud:
         key = json.dumps([width, height, self.proj.get("theme"), self.proj.get("units"),
                           self.proj.get("scale"), self.proj.get("speed_max"),
-                          self.proj.get("layout")], sort_keys=True)
+                          self.proj.get("layout"), self.ghost_cfg()], sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
             if h is None:
@@ -81,7 +89,8 @@ class Studio:
                     self._huds.clear()
                 h = Hud(self.tel, self.tm, width, height, units=self.proj.get("units") or "mph",
                         scale=float(self.proj.get("scale") or 1.0), theme=self.proj.get("theme"),
-                        layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"))
+                        layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"),
+                        ghost=self.ghost_cfg())
                 self._huds[key] = h
             return h
 
@@ -104,6 +113,7 @@ class Studio:
             "project": self.proj,
             "project_file": str(project.path_for(self.video_path)),
             "offset_source": self.offset_source,
+            "ghost_ref": self._ghost_ref(),
             "themes": [{"id": k, "label": t.get("label", k.title()),
                         "swatch": [list(t.get(c, THEMES["carbon"][c])) for c in ("bg", "text", "accent")]}
                        for k, t in THEMES.items()],
@@ -147,12 +157,22 @@ class Studio:
             w.writeframes(pcm.tobytes())
         return buf.getvalue()
 
+    def _ghost_ref(self) -> dict | None:
+        from .ghost import choose_ref
+        ref = choose_ref(self.tm, self.t0 + float(self.proj["offset"]), self.vinfo["duration"])
+        if ref is None:
+            return None
+        lap = self.tm.laps[ref]
+        return {"lap": lap.number, "time": fmt_time(lap.time)}
+
     def _panel_keys(self) -> list[dict]:
         names = []
         if self.tm.laps:
             names.append(("laps", "Lap timer & sectors"))
         names.append(("map", "Track map"))
         names.append(("speed", "Speed"))
+        if self.proj.get("ghost"):
+            names.append(("ghost", "Ghost lap"))
         if self.tel.is_bike:
             names.append(("gforce", "Lean angle"))
         elif self.tel.g_lat is not None:
@@ -179,21 +199,29 @@ class Studio:
         else:
             lap_s = {"pre": "Out lap", "post": "In lap", "none": "No laps"}[st.phase]
         inside = self.t0 <= t <= float(self.tel.t[-1])
+        g = h.ghost_info(t)
+        slot = h.ghost_slot()
+        gp = next((p for p in h.panels if p.name == "ghost"), None)
+        ghost = {"active": g.active, "vt": g.ref_vt, "gap": g.gap_m}
+        if slot and gp:
+            ghost["slot"] = [slot[0], slot[1] - gp.ay, slot[2], slot[3]]   # relative to the panel
         return {"pw": pw, "ph": ph, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
                 "panels": [p for p in h.describe() if p["name"] != "none"],
                 "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
                 "readout": {"lap": lap_s, "speed": speed_s, "data_time": t - self.t0,
-                            "in_data": inside}}
+                            "in_data": inside},
+                "ghost": ghost}
 
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
-                   "crew_chief", "voice", "voice_rate", "call_settings"}
+                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
         if "offset" in changes:
             self.offset_source = "set by you"
-        return {"saved": self.save(), "offset": self.proj["offset"]}
+        return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": self._ghost_ref(),
+                "panels": self._panel_keys()}
 
     def sync_lap(self, n: int, vt: float) -> dict:
         lap = next((l for l in self.tm.laps if l.number == n), None)
@@ -230,7 +258,7 @@ class Studio:
                 h = Hud(self.tel, self.tm, self.vinfo["width"], self.vinfo["height"],
                         units=self.proj.get("units") or "mph", scale=float(self.proj.get("scale") or 1),
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
-                        speed_max=self.proj.get("speed_max"))
+                        speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg())
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")

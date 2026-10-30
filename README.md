@@ -6,7 +6,7 @@ delta, sector times, track map with your position, speed, and a G-force
 circle (or a lean-angle gauge for bike sessions). Runs on your Mac, uses
 ffmpeg with the VideoToolbox hardware encoder.
 
-The overlay has four panels, each movable, resizable and optional:
+The overlay has these panels, each movable, resizable and optional:
 
 - **Lap timer:** running lap time, live delta to your best lap, last and
   best lap, and a sector bar that fills as you ride each sector, turning
@@ -16,6 +16,8 @@ The overlay has four panels, each movable, resizable and optional:
 - **Speedometer:** a 0–70 mph gauge (0–120 km/h in metric) with a red zone
   near the top, plus altitude and yaw rate. Change the top speed with
   `--speed-max` or in the editor.
+- **Ghost lap** (optional): your best lap's footage in a picture-in-picture,
+  matched to your position on track.
 - **G-force** circle with a trail (or a **lean angle** gauge for bike-mode
   RaceBox sessions).
 
@@ -146,6 +148,22 @@ Keys: Space plays/pauses, Left/Right step one frame, Shift+Left/Right one
 second. The GO 3S can record H.265; Safari and Chrome on a Mac play it, but
 if the video won't load in your browser, switch the camera to H.264.
 
+## Ghost lap
+
+A picture-in-picture window plays your fastest lap's footage alongside
+the current lap. It's matched to where you are on track, not to the clock,
+so the ghost is always in the same corner as you: you can see exactly
+where your line, braking point and speed differ. The label says how far
+ahead or behind the ghost is ("ghost 12 m ahead").
+
+- The ghost is your fastest lap that's entirely inside the video (its
+  footage is needed), so record the whole session in one clip if you can.
+- It shows during every other timed lap, and hides during the out-lap,
+  the in-lap and the fastest lap itself.
+- Turn it on with the switch at the top of the editor's **Look & layout**
+  tab, where the preview plays the ghost live, or with `--ghost`. Move and
+  resize it like any other panel.
+
 ## Crew chief radio
 
 Adds a race engineer on the radio to your video: short spoken calls at the
@@ -230,6 +248,7 @@ of the `.overlay.json`.
 | `--theme neon` | carbon, daylight, neon, minimal, or a theme `.json` |
 | `--speed-max 80` | top of the speedometer (default 70 mph / 120 km/h) |
 | `--workers 4` | CPU cores drawing the overlay (default: all but one) |
+| `--ghost` / `--no-ghost` | picture-in-picture of your best lap |
 | `--crew-chief` / `--no-crew-chief` | spoken crew chief calls in the audio |
 | `--voice Daniel` | which macOS voice the crew chief uses |
 | `--scale 1.2` | make the HUD bigger or smaller |
@@ -274,6 +293,8 @@ session at that track with `--track mytrack.json`. See
 - `rbo/gui.py` + `gui.html` — the editor: a small local web server that
   streams the video to your browser and draws overlay frames on request,
   using the same drawing code as the final render.
+- `rbo/ghost.py` — matches each moment of a lap to the same point on your
+  best lap and streams that lap's frames for the picture-in-picture.
 - `rbo/crewchief.py` — finds corners on your best lap, compares each lap with
   it (time, line, braking point, corner speed), turns findings into calls,
   speaks them, adds the radio sound and schedules them so none overlap.

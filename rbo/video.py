@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from fractions import Fraction
 
+import numpy as np
 from PIL import Image
 
 from .hud import Hud
@@ -201,10 +202,23 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         frames = pool.imap(_render_one, times, chunksize=4)
     else:
         frames = (hud.render_atlas(t).tobytes() for t in times)
+    feed = None
+    slot = hud.ghost_slot() if hud.ghost else None
+    if slot:
+        from .ghost import GhostFeed
+        feed = GhostFeed(video, float(fps), slot[2], slot[3])
     try:
         for i, buf in enumerate(frames):
             if proc.poll() is not None or (cancel is not None and cancel.is_set()):
                 break
+            if feed is not None:
+                g = hud.ghost_info(times[i])
+                if g.active:
+                    gf = feed.get(g.ref_vt)
+                    if gf is not None:
+                        arr = np.frombuffer(buf, np.uint8).reshape(hud.atlas_h, hud.atlas_w, 4).copy()
+                        hud.paste_ghost(arr, gf)
+                        buf = arr.tobytes()
             q.put(buf)
             if i % 60 == 0 or i == n_frames - 1:
                 el = time.time() - t0
@@ -215,6 +229,8 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         if pool is not None:
             pool.terminate()
             pool.join()
+        if feed is not None:
+            feed.close()
         q.put(None)
         threads[0].join()
         proc.wait()

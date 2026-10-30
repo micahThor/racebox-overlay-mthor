@@ -163,6 +163,7 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 .sens .val { color: var(--muted); font-family: var(--num); font-size: 15px; text-align: right; }
 .sens input { width: 100%; margin-top: 4px; }
 .count { font-family: var(--num); color: var(--amber); }
+.ghostvid { position: absolute; display: none; object-fit: cover; background: #000; pointer-events: none; }
 .callmark { position: absolute; bottom: 2px; width: 2px; height: 7px; background: var(--amber);
   opacity: .8; pointer-events: none; }
 
@@ -240,6 +241,13 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
     </div>
 
     <div class="pane" id="pane-look">
+      <button class="switch" id="ghSwitch" role="switch" aria-checked="false">
+        <span><b>Ghost lap</b><small id="ghState">Off</small></span>
+        <span class="knob" aria-hidden="true"></span>
+      </button>
+      <p style="margin-top:10px">A picture-in-picture of your fastest lap, matched to where you are on
+        track, so you can see where your line, braking and speed differ.</p>
+
       <h2>Theme</h2>
       <div class="themes" id="themes"></div>
 
@@ -348,6 +356,7 @@ function drawPanels(h) {
         let el = overlay.querySelector(`[data-key="${p.key}"]`);
         if (!el) { el = document.createElement("div"); el.className = "panel"; el.dataset.key = p.key;
                    el.title = "Drag to move"; overlay.appendChild(el); attachDrag(el); }
+        if (p.key === "ghost") placeGhost(el, p, h.ghost);
         if (el.classList.contains("drag")) continue;
         el.style.left = (p.x / h.pw * 100) + "%";
         el.style.top = (p.y / h.ph * 100) + "%";
@@ -388,6 +397,26 @@ function attachDrag(el) {
   });
 }
 
+/* ---------- ghost lap preview ---------- */
+function placeGhost(el, p, g) {
+  let v = el.querySelector("video");
+  if (!v) {
+    v = document.createElement("video");
+    v.className = "ghostvid"; v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = "/video";
+    el.appendChild(v);
+  }
+  if (!g || !g.active || !g.slot) { v.style.display = "none"; v.pause(); return; }
+  const [x, y, w, hh] = g.slot;
+  Object.assign(v.style, { display: "block", left: (x / p.w * 100) + "%", top: (y / p.h * 100) + "%",
+    width: (w / p.w * 100) + "%", height: (hh / p.h * 100) + "%", borderRadius: "6px" });
+  // follow the main video: jump when paused or when it drifts, play along when playing
+  if (vid.paused) { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - g.vt) > 0.02) v.currentTime = g.vt; }
+  else {
+    if (Math.abs(v.currentTime - g.vt) > 0.25) v.currentTime = g.vt;
+    if (v.paused) v.play().catch(() => {});
+  }
+}
+
 /* ---------- saving ---------- */
 async function save(changes) {
   Object.assign(P, changes);
@@ -395,6 +424,8 @@ async function save(changes) {
   try {
     const r = await api("/api/project", changes);
     P.offset = r.offset;
+    if (r.ghost_ref !== undefined) S.ghost_ref = r.ghost_ref;
+    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes) renderLook(); }
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
     $("#saved").classList.add("ok");
   } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
@@ -512,7 +543,16 @@ $("#auto").addEventListener("click", async () => {
 });
 
 /* ---------- look tab ---------- */
+function renderGhost() {
+  const on = !!P.ghost;
+  $("#ghSwitch").setAttribute("aria-checked", on);
+  $("#ghState").textContent = !S.ghost_ref ? "No complete lap in this video to use as the ghost"
+    : on ? `On: lap ${S.ghost_ref.lap} (${S.ghost_ref.time}), your fastest lap in this video` : "Off";
+}
+$("#ghSwitch").addEventListener("click", () => { save({ ghost: !P.ghost }); renderGhost(); });
+
 function renderLook() {
+  renderGhost();
   const th = $("#themes"); th.innerHTML = "";
   for (const t of S.themes) {
     const b = document.createElement("button");
