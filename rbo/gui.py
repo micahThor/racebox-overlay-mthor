@@ -67,6 +67,13 @@ class Studio:
         off, how = _auto_offset(created, self.tel, self.vinfo["duration"])
         return 0.0 if "doesn't match" in how else round(off - self.t0, 3)
 
+    def radio_style(self) -> str:
+        from .themes import load_theme
+        try:
+            return load_theme(self.proj.get("theme")).get("radio", "classic")
+        except ValueError:
+            return "classic"
+
     def save(self) -> str:
         return str(project.save(self.video_path, self.proj))
 
@@ -197,7 +204,7 @@ class Studio:
         c = self._calls()[i]
         audio = crewchief.radioize(crewchief.synthesize(
             c.text, self.proj.get("voice") or crewchief.default_voice(),
-            int(self.proj.get("voice_rate") or 190)))
+            int(self.proj.get("voice_rate") or 190)), style=self.radio_style())
         buf = io.BytesIO()
         import wave
         pcm = (audio.clip(-1, 1) * 32767).astype("<i2")
@@ -330,7 +337,8 @@ class Studio:
                     track, placed = crewchief.build_track(
                         self._calls(), s0 + off, s1 + off,
                         voice=self.proj.get("voice") or crewchief.default_voice(),
-                        rate=int(self.proj.get("voice_rate") or 190), progress=vprog)
+                        rate=int(self.proj.get("voice_rate") or 190), progress=vprog,
+                        style=self.radio_style())
                     crewchief.write_wav(radio, track)
                     self.render_state["calls"] = len(placed)
                 video.render(self.video_path, h, off, out, s0, end, progress=prog,

@@ -667,7 +667,7 @@ let audioEl = null;
 function playCall(i, btn) {
   if (audioEl) { audioEl.pause(); }
   btn.textContent = "…";
-  audioEl = new Audio(`/api/call-audio?i=${i}&v=${encodeURIComponent(P.voice || "")}&r=${P.voice_rate || 190}`);
+  audioEl = new Audio(`/api/call-audio?i=${i}&v=${encodeURIComponent(P.voice || "")}&r=${P.voice_rate || 190}&th=${encodeURIComponent(P.theme || "")}`);
   audioEl.addEventListener("playing", () => btn.textContent = "■");
   audioEl.addEventListener("ended", () => btn.textContent = "▶");
   audioEl.addEventListener("error", () => btn.textContent = "!");

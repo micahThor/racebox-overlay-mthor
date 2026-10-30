@@ -319,6 +319,14 @@ def chief(args, tel, tm, offset: float | None = None, duration: float | None = N
                                              ghost_ref=ghost_ref, race=race)
 
 
+def radio_style(args) -> str:
+    from .themes import load_theme
+    try:
+        return load_theme(getattr(args, "theme", None)).get("radio", "classic")
+    except ValueError:
+        return "classic"
+
+
 def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: str,
                quiet: bool = False):
     """Work out the crew chief calls for video times start..end and write the
@@ -334,7 +342,7 @@ def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: 
 
     track, placed = crewchief.build_track(calls, start + offset, end + offset, voice=voice,
                                           rate=int(getattr(args, "voice_rate", None) or 190),
-                                          progress=prog)
+                                          progress=prog, style=radio_style(args))
     if not quiet:
         print()
     crewchief.write_wav(out_wav, track)
@@ -454,7 +462,7 @@ def main(argv=None):
         s = p.add_argument_group("look")
         s.add_argument("--units", choices=["mph", "kmh"], default=None, help="default mph")
         s.add_argument("--scale", type=float, default=None, help="HUD size multiplier")
-        s.add_argument("--theme", help="carbon, daylight, neon, minimal, or a theme .json file")
+        s.add_argument("--theme", help="carbon, daylight, neon, minimal, broadcast, hud, arcade, vintage, or a theme .json file")
         s.add_argument("--ghost", action=argparse.BooleanOptionalAction, default=None,
                        help="picture-in-picture of your best lap, matched to your position")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",

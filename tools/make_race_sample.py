@@ -82,7 +82,7 @@ def main(out_dir, laps):
     path = out / "race_session.csv"
     with open(path, "w") as fh:
         fh.write("Data Source,RaceBox Mini S\nTrack,Sample Circuit\n")
-        fh.write("Record,Time,Latitude,Longitude,Altitude,Speed,GForceX,GForceY,GForceZ,Lap,GyroX,GyroY,GyroZ\n")
+        fh.write("Record,Time,Latitude,Longitude,Altitude,Speed,GForceX,GForceY,GForceZ,Lap,GyroX,GyroY,GyroZ,LeanAngle\n")
         for r, (tt, si, v) in enumerate(zip(ts, s, spd), 1):
             i0 = int(si) % n
             f = si - int(si)
@@ -92,8 +92,9 @@ def main(out_dir, laps):
             lon = LON0 + math.degrees((px + rng.normal(0, 0.2)) / (R * math.cos(math.radians(LAT0))))
             lap = int(si // n)
             yaw = math.degrees(v * k[i0])
+            lean = -math.degrees(math.atan(v * v * k[i0] / 9.81))      # bike mode: + = right
             stamp = (t0 + timedelta(seconds=float(tt))).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-            fh.write(f"{r},{stamp},{lat:.7f},{lon:.7f},180.0,{v * 3.6:.2f},0,0,1,{lap},0,0,{yaw:.2f}\n")
+            fh.write(f"{r},{stamp},{lat:.7f},{lon:.7f},180.0,{v * 3.6:.2f},0,0,1,{lap},0,0,{yaw:.2f},{lean:.1f}\n")
     cross = [GRID_WAIT + sum(laps[:j + 1]) for j in range(len(laps))]
     print(f"wrote {path}: {len(ts)} samples, {ts[-1]:.0f} s; race start at {GRID_WAIT:.0f} s, "
           f"line crossings at " + ", ".join(f"{c:.2f}" for c in cross))

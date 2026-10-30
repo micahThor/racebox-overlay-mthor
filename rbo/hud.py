@@ -27,6 +27,8 @@ from .telemetry import Telemetry
 from .themes import load_theme
 from .ghost import GhostState, ghost_state
 from .timing import HudState, Timing, fmt_time
+from .pixelfont import PixelFont
+from .hudstyles import StyleMixin
 
 PANEL_NAMES = ("laps", "map", "speed", "gforce")   # "gforce" shows lean for bikes
 
@@ -50,11 +52,42 @@ RACE_ROWS = 12          # most rows in the race tower
 RACE_RH = 27            # row height, reference pixels
 
 
-def find_font(override: str | None = None) -> str | None:
-    for p in ([override] if override else []) + FONT_CANDIDATES:
-        if p and Path(p).exists():
+def find_font(override=None) -> str | None:
+    """First font that exists. `override` is a path, a list of paths, "file.ttc:Face"
+    to pick a face from a collection, or "pixel" for the built-in pixel font."""
+    cands = override if isinstance(override, (list, tuple)) else ([override] if override else [])
+    for p in list(cands) + FONT_CANDIDATES:
+        if p == "pixel":
+            return p
+        if p and Path(p.split(":")[0] if p.count(":") and not p[1:3] == ":/" else p).exists():
             return p
     return None
+
+
+_FACE_INDEX: dict[str, int] = {}
+
+
+def load_font(spec: str | None, px: int):
+    if spec == "pixel":
+        return PixelFont(px)
+    if not spec:
+        return ImageFont.load_default(px)
+    path, face = spec, None
+    if ":" in spec and not spec[1:3] == ":/":
+        path, face = spec.rsplit(":", 1)
+    if face is None:
+        return ImageFont.truetype(path, px)
+    if spec not in _FACE_INDEX:                      # find the named face in a .ttc
+        _FACE_INDEX[spec] = 0
+        for i in range(32):
+            try:
+                f = ImageFont.truetype(path, 20, index=i)
+            except OSError:
+                break
+            if f.getname()[1].lower() == face.lower():
+                _FACE_INDEX[spec] = i
+                break
+    return ImageFont.truetype(path, px, index=_FACE_INDEX[spec])
 
 
 def _mix(a, b, f):
@@ -89,7 +122,7 @@ class Panel:
         return self.ay * self.ss
 
 
-class Hud:
+class Hud(StyleMixin):
     def __init__(self, tel: Telemetry, timing: Timing, width: int, height: int,
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
                  hide: set[str] | None = None, theme: str | dict | None = None,
@@ -176,10 +209,9 @@ class Hud:
         return rgb + (int(round(a * 255)),)
 
     def font(self, size: float) -> ImageFont.FreeTypeFont:
-        px = max(6, self.S(size))
+        px = max(6, self.S(size * self.theme.get("font_scale", 1.0)))
         if px not in self._fonts:
-            self._fonts[px] = (ImageFont.truetype(self.font_path, px) if self.font_path
-                               else ImageFont.load_default(px))
+            self._fonts[px] = load_font(self.font_path, px)
         return self._fonts[px]
 
     def text(self, d: ImageDraw.ImageDraw, x: float, y: float, s: str, size: float,
@@ -196,11 +228,19 @@ class Hud:
         widths = [(dw if c.isdigit() else L(f, c)) + sp for c in s]
         total = sum(widths) - (sp if s else 0)
         cx = x - total if anchor == "r" else x - total / 2 if anchor == "m" else x
+        pixel = isinstance(f, PixelFont)
         for c, w in zip(s, widths):
             off = (w - sp - L(f, c)) / 2 if c.isdigit() else 0
-            d.text((cx + off, y), c, font=f, fill=fill, anchor="ls", **extra)
+            if pixel:
+                f.draw(d, cx + off, y, c, fill, extra.get("stroke_fill"), extra.get("stroke_width", 0))
+            else:
+                d.text((cx + off, y), c, font=f, fill=fill, anchor="ls", **extra)
             cx += w
         return total
+
+    def measure(self, s: str, size: float) -> float:
+        f = self.font(size)
+        return sum(self._len(f, "#digit") if c.isdigit() else self._len(f, c) for c in s)
 
     def _len(self, f, c: str) -> float:
         key = (id(f), c)
@@ -214,6 +254,8 @@ class Hud:
         return not (self.C["bg"][3] == 0 and self.C["edge"][3] == 0)
 
     def card(self, img: Image.Image, d: ImageDraw.ImageDraw, p: Panel):
+        if self.shape != "round" and self.card_styled(img, d, p):
+            return
         if not self._has_card():
             return
         r = self.S(self.theme.get("radius", 18))
@@ -329,13 +371,14 @@ class Hud:
             self._use(p)
             if p.name != "ghost":          # the ghost's card only shows while it's active
                 self.card(img, d, p)
+                self.apply_texture(img, p)
             getattr(self, f"_static_{p.name}", lambda *a: None)(img, d, p)
         return img
 
     def _static_laps(self, img, d, p):
         pad = self.S(24)
         d.line([(pad, p.iay + self.S(148)), (p.iw - pad, p.iay + self.S(148))],
-               fill=self.tint("white", 0.12), width=max(1, self.S(1)))
+               fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, self.S(1)))
 
     def _static_map(self, img, d, p):
         pad = self.S(26)
@@ -347,23 +390,27 @@ class Hud:
 
         step = max(1, len(x) // 4000)
         pts = list(zip(*self._map_xform(x[::step], y[::step])))
-        d.line(pts, fill=self.tint("white", 0.16), width=max(1, self.S(3)), joint="curve")
+        d.line(pts, fill=self.tint("text" if self.light() else "white", 0.16), width=max(1, self.S(3)),
+               joint="curve")
 
         laps = self.timing.laps
         if laps:
             best = min(laps, key=lambda l: l.time)
             m = (self.tel.t >= best.t_start) & (self.tel.t <= best.t_end)
             line = list(zip(*self._map_xform(x[m], y[m])))
-            # soft glow under the racing line
-            layer = Image.new("RGBA", img.size, tuple(self.C["line"][:3]) + (0,))
-            ImageDraw.Draw(layer).line(line, fill=tuple(self.C["line"][:3]) + (110,),
-                                       width=self.S(12), joint="curve")
-            box = (0, p.iay, p.iw, p.iay + p.ih)
-            region = layer.crop(box).filter(ImageFilter.GaussianBlur(self.S(5)))
-            base = img.crop(box)
-            base.alpha_composite(region)
-            img.paste(base, box[:2])
-            d.line(line, fill=self.C["line"], width=max(2, self.S(5)), joint="curve")
+            if self.theme.get("map_glow", True):        # soft glow under the racing line
+                layer = Image.new("RGBA", img.size, tuple(self.C["line"][:3]) + (0,))
+                ImageDraw.Draw(layer).line(line, fill=tuple(self.C["line"][:3]) + (110,),
+                                           width=self.S(12), joint="curve")
+                box = (0, p.iay, p.iw, p.iay + p.ih)
+                region = layer.crop(box).filter(ImageFilter.GaussianBlur(self.S(5)))
+                base = img.crop(box)
+                base.alpha_composite(region)
+                img.paste(base, box[:2])
+            lw = max(2, self.S(self.theme.get("map_width", 5)))
+            if self.theme.get("stroke"):
+                d.line(line, fill=self.C["stroke_color"], width=lw + self.S(3), joint="curve")
+            d.line(line, fill=self.C["line"], width=lw, joint="curve")
 
         for g in self.timing.sector_gates:
             gx, gy = self._map_xform(g.x, g.y)
@@ -393,6 +440,8 @@ class Hud:
         return math.radians(GAUGE_START + GAUGE_SWEEP * frac)
 
     def _static_speed(self, img, d, p):
+        if self.gauge != "arc" and self.static_speed_styled(img, d, p):
+            return
         cx, cy, R, wid = self._gauge_geom(p)
         box = [cx - R, cy - R, cx + R, cy + R]
         vmax = self.speed_max
@@ -441,12 +490,20 @@ class Hud:
         cx, cy, R = p.iw / 2, p.iay + self.S(176), self.S(108)
         self._g_geom = (cx, cy, R)
         n = int(round(self.gmax / 0.5))
+        ring_col = "text" if self.light() else "white"
+        if self.gauge == "dial":
+            rr = R + self.S(10)
+            d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=self.C["edge"])
+            d.ellipse([cx - rr + self.S(4), cy - rr + self.S(4), cx + rr - self.S(4), cy + rr - self.S(4)],
+                      fill=tuple(min(255, v + 12) for v in self.C["bg"][:3]) + (255,))
         for i in range(1, n + 1):
-            r = R * i / n
+            r = R * i / n * (0.86 if self.gauge in ("led", "tape") else 1)
             outer = i == n
-            d.ellipse([cx - r, cy - r, cx + r, cy + r],
-                      outline=self.tint("white", 0.30 if outer else 0.12),
-                      width=max(1, self.S(2 if outer else 1.2)))
+            shape = d.rectangle if self.gauge in ("led", "tape") else d.ellipse
+            shape([cx - r, cy - r, cx + r, cy + r],
+                  outline=self.tint(ring_col, 0.30 if outer else 0.12) if not self.theme.get("stroke")
+                  else self.tint("accent", 0.8 if outer else 0.4),
+                  width=max(1, self.S(2 if outer else 1.2)))
             if i % 2 == 0 or outer:
                 self.text(d, cx + r * 0.71 + self.S(4), cy - r * 0.71 - self.S(2),
                           f"{i * 0.5:g}", 13, self.tint("dim", 0.8), "l")
@@ -458,6 +515,8 @@ class Hud:
         self.text(d, self.S(20), p.iay + self.S(36), "G-FORCE", 15, "dim", track=2)
 
     def _static_lean(self, img, d, p):
+        if self.gauge != "arc" and self.static_lean_styled(img, d, p):
+            return
         self.text(d, self.S(22), p.iay + self.S(36), "LEAN", 15, "dim", track=2)
         cx, cy, R = p.iw / 2, p.iay + self.S(228), self.S(150)
         wid = self.S(14)
@@ -532,9 +591,10 @@ class Hud:
         if st.delta is not None:
             col = self.C["green"] if st.delta < 0 else self.C["red"]
             label = fmt_time(st.delta, plus=True)
-            w = self.font(24).getlength(label) + S(30)
-            d.rounded_rectangle([right - w, oy + S(18), right, oy + S(52)], radius=S(17), fill=col)
-            self.text(d, right - w / 2, oy + S(44), label, 24, (255, 255, 255, 255), "m")
+            w = self.measure(label, 24) + S(30)
+            self.box(d, (right - w, oy + S(18), right, oy + S(52)), fill=col, radius=S(17), solid=False)
+            self.text(d, right - w / 2, oy + S(44), label, 24,
+                      (255, 255, 255, 255) if self.pill_solid() else col, "m")
 
         # main clock
         if held:
@@ -567,14 +627,15 @@ class Hud:
         for i, c in enumerate(cells):
             x0 = pad + i * (cw + gap)
             self.text(d, x0, top - S(8), f"S{i + 1}", 13, "dim", track=1.5)
-            d.rounded_rectangle([x0, top, x0 + cw, top + bh], radius=bh / 2, fill=self.tint("white", 0.12))
+            track_col = self.tint("text" if self.light() else "white", 0.12)
+            self.box(d, (x0, top, x0 + cw, top + bh), fill=track_col, radius=bh / 2)
             if c and c.status == "done":
-                d.rounded_rectangle([x0, top, x0 + cw, top + bh], radius=bh / 2, fill=self.col(c.color))
+                self.box(d, (x0, top, x0 + cw, top + bh), fill=self.col(c.color), radius=bh / 2)
             elif c and c.status == "running" and c.time is not None:
                 frac = min(c.time / ref_secs[i], 0.97) if ref_secs else 0.5
                 if frac * cw > bh:
-                    d.rounded_rectangle([x0, top, x0 + cw * frac, top + bh], radius=bh / 2,
-                                        fill=self.tint("white", 0.75))
+                    self.box(d, (x0, top, x0 + cw * frac, top + bh), radius=bh / 2,
+                             fill=self.tint("text" if self.light() else "white", 0.75))
             if c and c.time is not None:
                 done = c.status == "done"
                 self.text(d, x0, top + bh + S(30), fmt_time(c.time, digits=2 if done else 1), 23,
@@ -650,8 +711,7 @@ class Hud:
         if key not in self._sprites:
             _, _, w, h = slot
             m = Image.new("L", (w, h), 0)
-            ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1],
-                                                radius=max(2, int(8 * self.base_k)), fill=255)
+            ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1], radius=self.ghost_radius(), fill=255)
             self._sprites[key] = np.asarray(m, np.float32)[..., None] / 255
         return self._sprites[key]
 
@@ -668,10 +728,7 @@ class Hud:
         if not g.active:
             return
         S = self.S
-        r = S(12)
-        d.rounded_rectangle([0, p.iay, p.iw - 1, p.iay + p.ih - 1], radius=r,
-                            fill=self.C["bg"] if self._has_card() else (0, 0, 0, 170),
-                            outline=self.C["accent"], width=max(2, S(3)))
+        self.ghost_frame(d, p, self.C["accent"])
         y = p.iay + p.ih - S(11)
         w = self.text(d, S(14), y, "GHOST", 14, "accent", track=2)
         self.text(d, S(14) + w + S(10), y, f"BEST LAP {g.ref_number}  {fmt_time(g.ref_time)}", 15, "dim",
@@ -687,33 +744,11 @@ class Hud:
     # ------------------------------------------------------------ race tower
 
     def _draw_race(self, img, d, p, t, st):
-        S, oy, pad = self.S, p.iay, self.S(18)
+        S, oy = self.S, p.iay
         b = self.race.board(t, self.race_cls)
-        right = p.iw - pad
-        y = oy + S(40)
-        if not b["started"]:
-            self.text(d, pad, y, "GRID", 19, "dim", track=2)
-        elif b["finished"]:
-            self.text(d, pad, y, "FINISHED", 19, "white", track=2)
-            d.rectangle([right - S(118), oy + S(19), right - S(96), oy + S(41)], fill=(255, 255, 255, 255))
-            q = S(5.5)                                   # chequered flag
-            for i in range(4):
-                for j in range(4):
-                    if (i + j) % 2:
-                        x0, y0 = right - S(118) + i * q, oy + S(19) + j * q
-                        d.rectangle([x0, y0, x0 + q, y0 + q], fill=(20, 20, 20, 255))
-        elif b["final_lap"]:
-            self.text(d, pad, y, "FINAL LAP", 19, "yellow", track=2)
-        else:
-            x = pad + self.text(d, pad, y, "LAP", 15, "dim", track=2) + S(8)
-            x += self.text(d, x, y, str(b["lap"]), 24, "white")
-            self.text(d, x + S(2), y, f"/{b['laps']}", 16, "dim")
-        if b["pos"]:
-            w = self.text(d, right, y, f"/{b['of']}", 16, "dim", "r")
-            self.text(d, right - w - S(2), y, f"P{b['pos']}", 26, "accent", "r")
-        if self.race_cls:
-            self.text(d, pad, oy + S(57), self.race_cls.upper(), 10, "dim", track=1.5)
-
+        style = self.theme.get("tower", "default")
+        style = style if style in ("broadcast", "hud", "arcade", "pitboard") else "default"
+        self.tower_header(d, p, b, style)
         rows, rh, top = b["rows"], S(RACE_RH), oy + S(62)
         n = len(rows)
         me = next((i for i, r in enumerate(rows) if r["me"]), 0)
@@ -731,29 +766,7 @@ class Hud:
                 a, bb = int(math.floor(src)), int(math.ceil(src))
                 src = slot.get(a, slot[i]) + (slot.get(bb, slot[i]) - slot.get(a, slot[i])) * (src - a)
             ry = top + src * rh
-            if r["me"]:
-                d.rounded_rectangle([S(8), ry + S(2), p.iw - S(8), ry + rh - S(2)], radius=S(7),
-                                    fill=self.tint("accent", 0.85))
-            elif i % 2 == 0:
-                d.rounded_rectangle([S(8), ry + S(2), p.iw - S(8), ry + rh - S(2)], radius=S(7),
-                                    fill=self.tint("white", 0.05))
-            base = ry + rh / 2 + S(6)
-            fg = (255, 255, 255, 255) if r["me"] else self.C["text"]
-            dim = (255, 255, 255, 210) if r["me"] else self.C["dim"]
-            self.text(d, pad + S(22), base, str(i + 1), 17, fg, "r")
-            if r["moved"]:                          # recent change: arrow up or down
-                up = r["moved"] > 0
-                col = self.C["green"] if up else self.C["red"]
-                cx, cy, a = pad + S(34), ry + rh / 2, S(5)
-                tri = [(cx - a, cy + a * 0.6), (cx + a, cy + a * 0.6), (cx, cy - a * 0.8)] if up else \
-                      [(cx - a, cy - a * 0.6), (cx + a, cy - a * 0.6), (cx, cy + a * 0.8)]
-                d.polygon(tri, fill=(255, 255, 255, 255) if r["me"] else col)
-            self.text(d, pad + S(46), base, r["number"], 15, dim)
-            self.text(d, pad + S(94), base, r["name"].upper()[:11], 17, fg, track=0.5)
-            if r["lapped"]:
-                self.text(d, right, base, "+1 LAP", 14, dim, "r")
-            elif r["gap"] is not None and i > 0:
-                self.text(d, right, base, f"+{r['gap']:.1f}", 15, dim, "r")
+            self.tower_row(d, p, i, r, ry, rh, t, style)
 
     def _draw_map(self, img, d, p, t, st):
         x = float(np.interp(t, self.tel.t, self.timing.x))
@@ -764,11 +777,18 @@ class Hud:
         xb = float(np.interp(t + 0.25, self.tel.t, self.timing.x))
         if abs(xb - xa) > 0.3:
             self._facing = xb > xa
-        facing = getattr(self, "_facing", True)
-        self.stamp(img, self.glow(self.C["accent"], 15), px, py, p)
-        self.stamp(img, self._bike_icon(facing), px, py, p)
+        x0_, y0_ = self._map_xform(float(np.interp(t - 0.4, self.tel.t, self.timing.x)),
+                                   float(np.interp(t - 0.4, self.tel.t, self.timing.y)))
+        heading = math.atan2(py - y0_, px - x0_) if math.hypot(px - x0_, py - y0_) > self.S(1) else None
+        if heading is None:
+            heading = getattr(self, "_heading", None)
+        else:
+            self._heading = heading
+        self.draw_marker(img, d, p, px, py, heading, getattr(self, "_facing", True))
 
     def _draw_speed(self, img, d, p, t, st):
+        if self.gauge != "arc" and self.draw_speed_styled(img, d, p, t, st):
+            return
         cx, cy, R, wid = self._gauge_geom(p)
         v = float(np.interp(t, self.tel.t, self.tel.speed_kmh)) * self.speed_factor
         frac = min(max(v / self.speed_max, 0.0), 1.0)
@@ -833,6 +853,8 @@ class Hud:
                   "dim", "r", track=1.5)
 
     def _draw_lean(self, img, d, p, t, st):
+        if self.gauge != "arc" and self.draw_lean_styled(img, d, p, t, st):
+            return
         cx, cy, R, wid = self._lean_geom
         lean = float(np.interp(t, self.tel.t, self.tel.lean_deg))
         a = max(-60, min(60, lean))

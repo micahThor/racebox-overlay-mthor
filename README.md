@@ -280,15 +280,31 @@ makes a RaceBox session with the lap times of #96 in Speedhive session
 
 ## Themes
 
-Four built in: **carbon** (dark cards, default), **daylight** (light cards
+Colour themes: **carbon** (dark cards, default), **daylight** (light cards
 for bright, washed-out footage), **neon** (outlined, cyan), and **minimal**
-(no cards, outlined text). Pick one in the editor or with `--theme neon`.
+(no cards, outlined text).
+
+Styled themes change the shapes too, on every panel (lap timer, map and
+marker, speed, lean or G, ghost window, race tower) and the crew chief's
+radio sound:
+
+| Theme | Look | Speed / lean | Map marker | Race tower | Radio |
+|---|---|---|---|---|---|
+| **broadcast** (TV Broadcast) | slanted navy cards with a red stripe, condensed type | big number with a slanted bar; centre-zero lean bar | red badge with your race number | position boxes, class colour stripes, red header | clean digital link with chirps |
+| **hud** (Fighter HUD) | no cards, green lines in corner brackets, monospaced | scrolling speed tape; artificial horizon with roll scale | target diamond with heading line | bracketed row, P09-style positions | clipped military radio, roger beep |
+| **arcade** (Retro Arcade) | pixel font, magenta borders, scanlines | LED bar graphs | pixel-art bike | 1ST/2ND hi-score table, your row blinks after a pass | 8-bit, with blips |
+| **vintage** (Vintage Gauges) | cream faces in brass bezels, serif type, paper grain | needle dials with an odometer window; inclinometer | enamel badge | pit-board numbers, your row in yellow | crackly old two-way |
+
+Pick one in the editor or with `--theme hud`. The styled themes use fonts
+that come with macOS (Futura Condensed, Menlo, Rockwell) and fall back to
+similar ones elsewhere; the arcade font is built in.
 
 Make your own as a JSON file. Start from a built-in and change only what you
 want; the full list of keys is in `rbo/themes.py`:
 
 ```json
-{ "base": "carbon", "accent": [0, 160, 255], "bg": [0, 20, 40, 190], "radius": 6 }
+{ "base": "carbon", "accent": [0, 160, 255], "bg": [0, 20, 40, 190], "radius": 6,
+  "gauge": "dial", "marker": "target", "radio": "digital" }
 ```
 
 Then use `--theme mytheme.json`, or put the file's path in the `theme` field

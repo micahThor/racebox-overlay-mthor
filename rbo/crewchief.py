@@ -565,32 +565,85 @@ def _band(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return np.fft.irfft(F, n).astype(np.float32)
 
 
-def radioize(voice: np.ndarray, seed: int = 0) -> np.ndarray:
-    """Team-radio sound: narrow band, a bit of drive, squelch before and after."""
+RADIO_STYLES = {
+    "classic": "Team radio",
+    "digital": "Clean digital link",
+    "military": "Clipped military radio",
+    "arcade": "8-bit",
+    "vintage": "Crackly old two-way",
+}
+
+
+def _tone(freqs, ms_each, level=0.18, square=False):
+    out = []
+    for f in freqs:
+        n = int(RATE * ms_each / 1000)
+        ph = 2 * np.pi * f * np.arange(n) / RATE
+        w = np.sign(np.sin(ph)) * 0.6 if square else np.sin(ph)
+        env = np.minimum(1, np.minimum(np.arange(n), n - np.arange(n)) / (RATE * 0.004))
+        out.append((w * env * level).astype(np.float32))
+    return np.concatenate(out) if out else np.zeros(0, np.float32)
+
+
+def radioize(voice: np.ndarray, seed: int = 0, style: str = "classic") -> np.ndarray:
+    """Radio sound for a call. Styles (see RADIO_STYLES) go with the overlay theme:
+    classic team radio (narrow band, a bit of drive, squelch before and after),
+    a clean digital link with chirps, clipped military radio with a roger beep,
+    8-bit with blips, or a crackly old two-way."""
     rng = np.random.default_rng(seed)
-    v = _band(voice, 320, 3300)
+    style = style if style in RADIO_STYLES else "classic"
+    lo, hi, drive, hiss_lvl = {"classic": (320, 3300, 2.2, 0.025), "digital": (180, 5200, 1.4, 0.0),
+                               "military": (420, 2700, 4.0, 0.045), "arcade": (250, 4200, 1.8, 0.0),
+                               "vintage": (480, 2500, 2.8, 0.05)}[style]
+    v = _band(voice, lo, hi)
     peak = np.max(np.abs(v)) or 1.0
-    v = np.tanh(v / peak * 2.2) / np.tanh(2.2) * 0.7            # gentle saturation
-    hiss = _band(rng.normal(0, 1, len(v)).astype(np.float32), 500, 3800)
-    v += hiss / (np.max(np.abs(hiss)) or 1) * 0.025
-    def burst(ms, decay):
+    v = np.tanh(v / peak * drive) / np.tanh(drive) * 0.7
+    if style == "arcade":                       # bit-crush: 8 kHz sample-and-hold, 5-bit levels
+        hold = RATE // 8000
+        v = np.repeat(v[::hold], hold)[: len(v)]
+        v = np.round(v * 16) / 16
+    if style == "vintage":                      # mains hum, slow fade in and out of the signal
+        tt = np.arange(len(v)) / RATE
+        v = v * (0.85 + 0.15 * np.sin(2 * np.pi * 0.7 * tt)) + 0.012 * np.sin(2 * np.pi * 60 * tt)
+    if hiss_lvl:
+        hiss = _band(rng.normal(0, 1, len(v)).astype(np.float32), 500, 3800)
+        v = v + hiss / (np.max(np.abs(hiss)) or 1) * hiss_lvl
+    if style == "vintage":                      # crackle
+        pops = rng.random(len(v)) < 18 / RATE
+        v = v + np.where(pops, rng.choice([-1, 1], len(v)) * rng.uniform(0.1, 0.35, len(v)), 0)
+    v = v.astype(np.float32)
+
+    def burst(ms, decay, band=(800, 4500), level=0.22):
         n = int(RATE * ms / 1000)
-        nz = _band(rng.normal(0, 1, n).astype(np.float32), 800, 4500)
+        nz = _band(rng.normal(0, 1, n).astype(np.float32), *band)
         env = np.exp(-np.linspace(0, decay, n))
-        return (nz / (np.max(np.abs(nz)) or 1) * 0.22 * env).astype(np.float32)
+        return (nz / (np.max(np.abs(nz)) or 1) * level * env).astype(np.float32)
     click = np.zeros(int(RATE * 0.012), np.float32)
     click[: int(RATE * 0.004)] = 0.35
     gap = np.zeros(int(RATE * 0.06), np.float32)
-    return np.concatenate([click, burst(110, 2.5), gap, v.astype(np.float32), gap, burst(160, 4)])
+    if style == "digital":
+        head, tail = _tone([1400, 1900], 45, 0.14), _tone([1900, 1400], 45, 0.12)
+    elif style == "military":
+        head, tail = np.concatenate([click, burst(70, 3, level=0.3)]), \
+            np.concatenate([_tone([1000], 140, 0.2), burst(90, 5, level=0.25)])
+    elif style == "arcade":
+        head = _tone([523, 659, 784, 1047], 40, 0.16, square=True)
+        tail = _tone([1047, 784], 50, 0.14, square=True)
+    elif style == "vintage":
+        head = np.concatenate([click, burst(260, 1.5, (300, 3000), 0.28)])
+        tail = burst(320, 2.0, (300, 3000), 0.3)
+    else:
+        head, tail = np.concatenate([click, burst(110, 2.5)]), burst(160, 4)
+    return np.concatenate([head, gap, v, gap, tail]).astype(np.float32)
 
 
 def build_track(calls: list[Call], t0: float, t1: float, voice: str | None = None,
-                rate: int = 190, progress=None) -> tuple[np.ndarray, list[Call]]:
+                rate: int = 190, progress=None, style: str = "classic") -> tuple[np.ndarray, list[Call]]:
     """Synthesise, schedule (no overlaps) and place calls between telemetry
     times t0..t1. Returns the audio and the calls actually placed."""
     cand = [c for c in calls if t0 - 1 <= c.t <= t1]
     for i, c in enumerate(cand):
-        c.audio = radioize(synthesize(c.text, voice, rate), seed=i)
+        c.audio = radioize(synthesize(c.text, voice, rate), seed=i, style=style)
         c.duration = len(c.audio) / RATE
         if progress:
             progress(i + 1, len(cand))
