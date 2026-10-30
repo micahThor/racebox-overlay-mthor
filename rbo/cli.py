@@ -1,0 +1,227 @@
+"""racebox-overlay command line.
+
+    racebox-overlay info    SESSION.csv                       laps, sectors, sync hints
+    racebox-overlay preview VIDEO.mp4 SESSION.csv --at 1:23   still frames to check layout & sync
+    racebox-overlay render  VIDEO.mp4 SESSION.csv -o out.mp4  the finished video
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from . import telemetry, timing, video
+from .hud import Hud
+from .timing import fmt_time
+
+
+def parse_clock(s: str) -> float:
+    """'83.5', '1:23.5' or '0:01:23.5' -> seconds."""
+    total = 0.0
+    for part in s.strip().split(":"):
+        total = total * 60 + float(part)
+    return total
+
+
+def clock(s: float) -> str:
+    sign = "-" if s < 0 else ""
+    s = abs(s)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{sign}{int(h)}:{int(m):02d}:{sec:06.3f}" if h else f"{sign}{int(m)}:{sec:06.3f}"
+
+
+# ---------------------------------------------------------------- loading
+
+def load_session(args):
+    tel = telemetry.load(args.session)
+    track = timing.load_track(args.track)
+    tm = timing.Timing(tel, track=track, n_sectors=args.sectors, delta_ref=args.delta_ref)
+    return tel, tm
+
+
+def resolve_offset(args, tel, tm, vinfo: dict | None) -> tuple[float, str]:
+    """Return (offset, how) where telemetry_time = video_time + offset."""
+    if args.sync_lap:
+        try:
+            n, at = args.sync_lap.replace("=", "@").split("@", 1)
+            n = int(n)
+        except ValueError:
+            sys.exit("--sync-lap looks like  3@4:12.40  (lap 3 starts at 4:12.40 in the video)")
+        if not 1 <= n <= len(tm.laps):
+            sys.exit(f"--sync-lap: there are {len(tm.laps)} timed laps")
+        off = tm.laps[n - 1].t_start - parse_clock(at)
+        how = f"lap {n} starts at {at} in the video"
+    elif args.offset is not None:
+        off = tel.t[0] + parse_clock(args.offset) if ":" in args.offset else tel.t[0] + float(args.offset)
+        how = f"video starts {args.offset}s into the data"
+    else:
+        created = None
+        if args.time_source:
+            created = video.probe(args.time_source)["created"]
+        elif vinfo:
+            created = vinfo["created"]
+        if created is None:
+            off, how = tel.t[0], "no sync info: assuming video and data start together (use --sync-lap)"
+        else:
+            off, how = _auto_offset(created, tel, vinfo["duration"] if vinfo else 0)
+    off += args.nudge
+    if args.nudge:
+        how += f", nudged {args.nudge:+.2f}s"
+    return off, how
+
+
+def _auto_offset(created: float, tel, duration: float) -> tuple[float, str]:
+    """Camera clocks are often a time zone off (Insta360 writes local time
+    labelled as UTC). Try whole-hour shifts and keep the one that overlaps the
+    data best."""
+    d0, d1 = tel.t[0], tel.t[-1]
+    best, best_ov = 0, -1.0
+    for h in range(-14, 15):
+        s = created + h * 3600
+        ov = min(s + max(duration, 1), d1) - max(s, d0)
+        if ov > best_ov + 1:
+            best, best_ov = h, ov
+    if best_ov <= 0:
+        return d0, "camera clock doesn't match the data; assuming they start together (use --sync-lap)"
+    stamp = datetime.fromtimestamp(created, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    note = f" (shifted {best:+d}h for time zone)" if best else ""
+    return created + best * 3600, f"camera clock {stamp} UTC{note}; typically within a second or two"
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_info(args):
+    tel, tm = load_session(args)
+    meta = " · ".join(f"{k}: {v}" for k, v in tel.meta.items() if k in ("Data Source", "Track", "Date UTC"))
+    start = datetime.fromtimestamp(tel.t[0], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    rate = (len(tel.t) - 1) / tel.duration if tel.duration else 0
+    print(f"{Path(args.session).name}: {len(tel.t)} samples at {rate:.0f} Hz, "
+          f"{clock(tel.duration)} long, starts {start}")
+    if meta:
+        print(f"  {meta}")
+    chans = [n for n in ("alt", "g_long", "g_lat", "lean_deg", "yaw_rate", "lap") if getattr(tel, n) is not None]
+    print(f"  channels: speed, position, {', '.join(chans)}{'  (bike mode)' if tel.is_bike else ''}")
+    if tm.auto_line:
+        print("  NOTE: no lap info in this file, so the start/finish line was placed automatically.\n"
+              "        Lap times are right but laps start at the wrong spot. Export CSV from\n"
+              "        RaceBox instead, or give a --track file.")
+    if not tm.laps:
+        print("  no timed laps found")
+        return
+    best = min(tm.laps, key=lambda l: l.time)
+    print(f"\n  {'lap':>4}  {'time':>9}  {'starts in data':>14}   sectors")
+    for l in tm.laps:
+        secs = "  ".join(fmt_time(s) for s in l.sectors) if l.sectors else "-"
+        star = " *" if l is best else ""
+        print(f"  {l.number:>4}  {fmt_time(l.time):>9}  {clock(l.t_start - tel.t[0]):>14}   {secs}{star}")
+    sec = [l.sectors for l in tm.laps if l.sectors]
+    if sec:
+        theo = sum(min(s[i] for s in sec) for i in range(len(sec[0])))
+        print(f"\n  best {fmt_time(best.time)} (lap {best.number}), theoretical {fmt_time(theo)}")
+    if not args.track:
+        print(f"  sectors: {'auto, ' + str(args.sectors) + ' equal parts of the best lap' if tm.sector_gates else 'none'}")
+    if args.save_track:
+        Path(args.save_track).write_text(json.dumps(tm.track_dict(), indent=2) + "\n")
+        print(f"  saved start/finish and sector points to {args.save_track}")
+
+
+def _setup(args):
+    vinfo = video.probe(args.video)
+    tel, tm = load_session(args)
+    offset, how = resolve_offset(args, tel, tm, vinfo)
+    hide = set(filter(None, (args.hide or "").split(",")))
+    hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
+              font=args.font, hide=hide)
+    print(f"sync: {how}")
+    if tm.laps:
+        v1 = tm.laps[0].t_start - offset
+        inside = 0 <= v1 <= vinfo["duration"]
+        print(f"      -> lap 1 starts at {clock(v1)} in the video" + ("" if inside else " (outside this clip)"))
+    v_end = tel.t[-1] - offset
+    if v_end < 0 or tel.t[0] - offset > vinfo["duration"]:
+        print("      WARNING: the data doesn't overlap this video at all with this sync")
+    return vinfo, tel, tm, offset, hud
+
+
+def cmd_preview(args):
+    vinfo, tel, tm, offset, hud = _setup(args)
+    times = [parse_clock(a) for a in args.at] if args.at else [vinfo["duration"] / 2]
+    base = Path(args.output or "preview.png")
+    for i, vt in enumerate(times):
+        frame = video.grab_frame(args.video, vt)
+        img = hud.compose(frame, vt + offset)
+        out = base if len(times) == 1 else base.with_name(f"{base.stem}_{i + 1}{base.suffix}")
+        img.save(out)
+        print(f"  {clock(vt)} -> {out}")
+
+
+def cmd_render(args):
+    vinfo, tel, tm, offset, hud = _setup(args)
+    start = parse_clock(args.start) if args.start else 0.0
+    end = parse_clock(args.end) if args.end else None
+    out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
+    print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
+    video.render(args.video, hud, offset, out, start, end, args.codec, args.bitrate, args.quality)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="racebox-overlay",
+                                 description="Overlay RaceBox lap timing and telemetry on video.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def session_opts(p):
+        p.add_argument("--track", help="track JSON with start_finish / sectors points")
+        p.add_argument("--sectors", type=int, default=3,
+                       help="auto-split each lap into N sectors when no track file (default 3, 0 = off)")
+        p.add_argument("--delta-ref", choices=["best-so-far", "session-best"], default="best-so-far",
+                       help="what the live delta compares against")
+
+    def video_opts(p):
+        p.add_argument("video")
+        p.add_argument("session", help="RaceBox CSV (or VBO) export")
+        session_opts(p)
+        g = p.add_argument_group("sync (pick one; default uses the camera clock)")
+        g.add_argument("--sync-lap", metavar="N@TIME",
+                       help="lap N crosses the start line at TIME in the video, e.g. 2@3:41.20")
+        g.add_argument("--offset", metavar="SECONDS",
+                       help="the video starts this far into the data (can be negative)")
+        g.add_argument("--time-source", metavar="FILE",
+                       help="read the camera clock from this file (e.g. the original .insv)")
+        g.add_argument("--nudge", type=float, default=0.0, help="shift the sync by this many seconds")
+        s = p.add_argument_group("look")
+        s.add_argument("--units", choices=["mph", "kmh"], default="mph")
+        s.add_argument("--scale", type=float, default=1.0, help="HUD size multiplier")
+        s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
+        s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
+        p.add_argument("-o", "--output")
+
+    p = sub.add_parser("info", help="list laps and sectors in a session")
+    p.add_argument("session")
+    session_opts(p)
+    p.add_argument("--save-track", metavar="FILE", help="write the start/finish and sector points as a track file")
+    p.set_defaults(fn=cmd_info)
+
+    p = sub.add_parser("preview", help="render still frames to check the layout and sync")
+    video_opts(p)
+    p.add_argument("--at", action="append", help="video time(s) to preview, e.g. --at 1:20 --at 3:05.5")
+    p.set_defaults(fn=cmd_preview)
+
+    p = sub.add_parser("render", help="render the finished video")
+    video_opts(p)
+    p.add_argument("--start", help="only render from this video time")
+    p.add_argument("--end", help="only render up to this video time")
+    p.add_argument("--codec", choices=["h264", "hevc"], default="h264")
+    p.add_argument("--bitrate", help="e.g. 40M (default scales with resolution)")
+    p.add_argument("--quality", choices=["fast", "best"], default="fast",
+                   help="fast = hardware encoder (VideoToolbox) when available")
+    p.set_defaults(fn=cmd_render)
+
+    args = ap.parse_args(argv)
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

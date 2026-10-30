@@ -1,0 +1,10 @@
+{
+  "name": "My Track",
+  "start_finish": [29.1851, -81.0703],
+  "start_heading": 90,
+  "sectors": [
+    [29.1902, -81.0721],
+    [29.1879, -81.0659]
+  ],
+  "gate_width_m": 15
+}
