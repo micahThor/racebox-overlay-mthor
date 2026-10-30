@@ -110,15 +110,39 @@ class Corner:
     sign: int       # +1 right-hander, -1 left-hander
 
 
+# Kinds of call that can be switched on and off, and the sensitivity settings.
+KINDS = {
+    "lap": "Lap times",
+    "sector": "Purple sectors",
+    "theoretical": "Theoretical best",
+    "corner": "Corner mistakes",
+    "good": "Good braking",
+    "topspeed": "Top speed",
+    "consistency": "Consistency",
+}
+DEFAULTS = {
+    "wide_m": 2.5,            # this far outside the best lap's line counts as running wide
+    "early_brake_m": 12.0,    # braking this much earlier than on the best lap
+    "slow_corner_kmh": 6.0,   # carrying this much less speed through a corner
+    "min_loss": 0.1,          # a corner mistake has to cost at least this much time
+    "max_corner_calls": 2,    # most mistake calls per lap
+    "consistency_s": 0.35,    # laps within this spread count as consistent
+    "off": [],                # kinds of call switched off
+}
+
+
 class CrewChief:
     def __init__(self, tel: Telemetry, timing: Timing, units: str = "mph",
                  wide_m: float = 2.5, early_brake_m: float = 12.0, slow_apex_kmh: float = 6.0,
-                 min_loss: float = 0.1, max_corner_calls: int = 2):
+                 min_loss: float = 0.1, max_corner_calls: int = 2, consistency_s: float = 0.35,
+                 off: set[str] | None = None):
         self.tel, self.tm = tel, timing
         self.units = units
         self.wide_m, self.early_brake_m = wide_m, early_brake_m
         self.slow_apex_kmh, self.min_loss = slow_apex_kmh, min_loss
-        self.max_corner_calls = max_corner_calls
+        self.max_corner_calls = int(max_corner_calls)
+        self.consistency_s = consistency_s
+        self.on = set(KINDS) - set(off or ())
         self.laps = timing.laps
         self.corners: list[Corner] = []
         if len(self.laps) >= 2:
@@ -126,6 +150,16 @@ class CrewChief:
             self._profiles = [self._lap_profile(l) for l in self.laps]
             self.L = self._profiles[self.best_i]["s"][-1]
             self.corners = self._find_corners()
+
+    @classmethod
+    def from_settings(cls, tel: Telemetry, timing: Timing, units: str = "mph",
+                      settings: dict | None = None) -> "CrewChief":
+        s = dict(DEFAULTS)
+        s.update({k: v for k, v in (settings or {}).items() if v is not None})
+        return cls(tel, timing, units, wide_m=float(s["wide_m"]),
+                   early_brake_m=float(s["early_brake_m"]), slow_apex_kmh=float(s["slow_corner_kmh"]),
+                   min_loss=float(s["min_loss"]), max_corner_calls=int(s["max_corner_calls"]),
+                   consistency_s=float(s["consistency_s"]), off=set(s["off"] or ()))
 
     # per-lap arrays against distance (metres), normalised to the best lap's length
     def _lap_profile(self, lap) -> dict:
@@ -205,14 +239,17 @@ class CrewChief:
             if secs and best_sectors and k > 0:
                 for i, sv in enumerate(secs):
                     if sv < best_sectors[i] - 0.005:
-                        if i == len(secs) - 1:
-                            final_purple = True
+                        if "sector" not in self.on:
+                            continue
+                        if i == len(secs) - 1 and "lap" in self.on:
+                            final_purple = True          # said as part of the lap call
                         else:
-                            out.append(Call(lap.splits[i] + 0.6, f"Purple sector {words(i + 1)}.",
-                                            "sector", 2, n))
+                            at = lap.splits[i] if i < len(secs) - 1 else lap.t_end
+                            out.append(Call(at + 0.6, f"Purple sector {words(i + 1)}.", "sector", 2, n))
 
             # ---- corners, against the best lap so far
-            if k > 0 and self.corners and best_so_far is not None:
+            if k > 0 and self.corners and best_so_far is not None and \
+                    ({"corner", "good"} & self.on):
                 out += self._corner_calls(k, laps.index(best_so_far), grids)
 
             # ---- top speed on this lap
@@ -221,7 +258,7 @@ class CrewChief:
                 i = int(np.argmax(np.where(m, self.tel.speed_kmh, -1)))
                 vmax = float(self.tel.speed_kmh[i])
                 f = 0.621371 if self.units == "mph" else 1.0
-                if top is not None and (vmax - top) * f >= 1.0:
+                if top is not None and (vmax - top) * f >= 1.0 and "topspeed" in self.on:
                     out.append(Call(float(self.tel.t[i]) + 0.8,
                                     f"New top speed, {words(round(vmax * f))}.", "topspeed", 3, n))
                 top = vmax if top is None else max(top, vmax)
@@ -243,23 +280,29 @@ class CrewChief:
                     [min(a, b) for a, b in zip(best_sectors, secs)]
             if best_so_far is None or lap.time < best_so_far.time:
                 best_so_far = lap
-            if best_sectors and k > 0:
+            if best_sectors and k > 0 and "theoretical" in self.on:
                 theo = sum(best_sectors)
                 if theo < best_so_far.time - 0.15 and (last_theo is None or theo < last_theo - 0.05):
-                    parts.append(f"There's a {say_laptime(theo)} in you.")
+                    msg = f"There's a {say_laptime(theo)} in you."
+                    if "lap" in self.on:
+                        parts.append(msg)
+                    else:
+                        out.append(Call(lap.t_end + 1.2, msg, "theoretical", 2, n))
                     last_theo = theo
-            out.append(Call(lap.t_end + 0.8, " ".join(parts), "lap", 1, n))
+            if "lap" in self.on:
+                out.append(Call(lap.t_end + 0.8, " ".join(parts), "lap", 1, n))
 
             # ---- consistency streaks
             times = [l.time for l in laps[:k + 1]]
             streak = 1
             while streak < len(times):
                 win = times[-(streak + 1):]
-                if max(win) - min(win) <= 0.35:
+                if max(win) - min(win) <= self.consistency_s:
                     streak += 1
                 else:
                     break
-            if streak >= 3 and streak > streak_said and streak in (3, 5, 8, 12):
+            if streak >= 3 and streak > streak_said and streak in (3, 5, 8, 12) and \
+                    "consistency" in self.on:
                 spread = max(times[-streak:]) - min(times[-streak:])
                 out.append(Call(lap.t_end + 1.0,
                                 f"{words(streak).capitalize()} laps within {say_gap(spread)}. Nice and consistent.",
@@ -328,12 +371,12 @@ class CrewChief:
                 text = f"Braked early into {turn}, {say_gap(lost)} lost."
             elif apex_drop > self.slow_apex_kmh and lost > self.min_loss:
                 text = f"{turn.capitalize()}, carried {words(round(apex_drop * f))} {unit} less, {say_gap(lost)} lost."
-            elif -brake_diff > self.early_brake_m * 0.8 and lost < -0.15:
+            elif -brake_diff > self.early_brake_m * 0.8 and lost < -0.15 and "good" in self.on:
                 found.append((-1, Call(lap.t_start + float(A["t"][i1]) + 0.3,
                                        f"Good braking into {turn}, picked up {say_gap(lost)}.",
                                        "corner", 3, lap.number, c.number)))
                 continue
-            if text:
+            if text and "corner" in self.on:
                 found.append((max(lost, 0.001), Call(lap.t_start + float(A["t"][i1]) + 0.3, text, "corner", 2,
                                          lap.number, c.number)))
         # only the costliest few mistakes per lap, plus at most one good-news call

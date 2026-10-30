@@ -156,6 +156,13 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
   padding: 0; text-align: left; }
 .calls .play { padding: 2px 0; width: 34px; font-size: 13px; }
 .calls .k { color: var(--muted); font-size: 12px; display: block; }
+.kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 14px; }
+.kinds label { display: flex; gap: 8px; align-items: center; }
+.sens { padding: 8px 0; border-top: 1px solid var(--line); }
+.sens .top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.sens .val { color: var(--muted); font-family: var(--num); font-size: 15px; text-align: right; }
+.sens input { width: 100%; margin-top: 4px; }
+.count { font-family: var(--num); color: var(--amber); }
 .callmark { position: absolute; bottom: 2px; width: 2px; height: 7px; background: var(--amber);
   opacity: .8; pointer-events: none; }
 
@@ -269,7 +276,13 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
         <h2>Speaking speed</h2>
         <div class="row"><input type="range" id="ccRate" min="150" max="240" step="5" style="flex:1">
           <span class="pct" id="ccRateV"></span></div>
-        <h2>Calls in this video</h2>
+        <h2>What to call</h2>
+        <div class="kinds" id="ccKinds"></div>
+        <h2>Sensitivity</h2>
+        <p>Raise a value to make that call rarer. The list below updates as you go.</p>
+        <div id="ccSens"></div>
+        <div class="row" style="margin-top:10px"><button id="ccReset">Reset to defaults</button></div>
+        <h2>Calls in this video <span class="count" id="ccCount"></span></h2>
         <p>Click a time to jump there, or play a call to hear it.</p>
         <ul class="calls" id="ccList"></ul>
       </div>
@@ -387,7 +400,8 @@ async function save(changes) {
   } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
   if ("offset" in changes) { S.offset_source = "set by you"; }
   renderSync(); renderTimeline(); refreshHud();
-  if ("offset" in changes || "units" in changes) loadCalls();
+  if ("offset" in changes || "units" in changes || "call_settings" in changes) loadCalls();
+  if ("units" in changes) renderSens();
 }
 
 /* ---------- transport & timeline ---------- */
@@ -561,6 +575,7 @@ let CALLS = [];
 const KIND = { lap: "Lap", sector: "Sector", corner: "Corner", topspeed: "Top speed", consistency: "Consistency" };
 async function loadCalls() {
   CALLS = await api("/api/calls");
+  $("#ccCount").textContent = `(${CALLS.length})`;
   const ul = $("#ccList"); ul.innerHTML = "";
   if (!CALLS.length) { ul.innerHTML = '<li style="display:block;color:var(--muted)">No calls fall inside this video with the current sync.</li>'; }
   for (const c of CALLS) {
@@ -609,7 +624,59 @@ function renderCC() {
   }
   $("#ccRate").value = P.voice_rate || 190; $("#ccRateV").textContent = (P.voice_rate || 190) + " wpm";
   renderCallMarks();
+  renderSens();
 }
+const MPH = 1.609344;
+function sensDefs() {
+  const mph = (P.units || "mph") === "mph";
+  return [
+    { key: "wide_m", label: "Running wide", min: 1, max: 8, step: 0.5,
+      show: v => `${v} m outside best line` },
+    { key: "early_brake_m", label: "Braking early", min: 5, max: 40, step: 1,
+      show: v => `${v} m earlier` },
+    { key: "slow_corner_kmh", label: "Slow through a corner", min: mph ? 2 : 3, max: mph ? 15 : 25, step: 1,
+      toUi: v => Math.round(mph ? v / MPH : v), fromUi: v => mph ? +(v * MPH).toFixed(2) : v,
+      show: v => `${v} ${mph ? "mph" : "km/h"} slower` },
+    { key: "min_loss", label: "Only if it cost at least", min: 0.05, max: 0.5, step: 0.05,
+      show: v => `${(+v).toFixed(2)} s` },
+    { key: "max_corner_calls", label: "Corner calls per lap", min: 0, max: 5, step: 1,
+      show: v => +v === 0 ? "none" : `up to ${v}` },
+    { key: "consistency_s", label: "Consistent laps", min: 0.1, max: 1, step: 0.05,
+      show: v => `3+ laps within ${(+v).toFixed(2)} s` },
+  ];
+}
+function cs() { return Object.assign({}, S.call_defaults, P.call_settings || {}); }
+function saveCS(changes) {
+  P.call_settings = Object.assign({}, P.call_settings || {}, changes);
+  save({ call_settings: P.call_settings });
+}
+function renderSens() {
+  const cur = cs();
+  const kinds = $("#ccKinds"); kinds.innerHTML = "";
+  for (const [k, label] of Object.entries(S.call_kinds)) {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="checkbox" ${cur.off.includes(k) ? "" : "checked"}> ${label}`;
+    l.querySelector("input").addEventListener("change", e => {
+      const off = new Set(cs().off);
+      e.target.checked ? off.delete(k) : off.add(k);
+      saveCS({ off: [...off] });
+    });
+    kinds.appendChild(l);
+  }
+  const box = $("#ccSens"); box.innerHTML = "";
+  for (const d of sensDefs()) {
+    const ui = d.toUi ? d.toUi(cur[d.key]) : cur[d.key];
+    const row = document.createElement("div"); row.className = "sens";
+    row.innerHTML = `<div class="top"><span>${d.label}</span><span class="val"></span></div>
+      <input type="range" min="${d.min}" max="${d.max}" step="${d.step}" value="${ui}" aria-label="${d.label}">`;
+    const r = row.querySelector("input"), val = row.querySelector(".val");
+    val.textContent = d.show(ui);
+    r.addEventListener("input", () => val.textContent = d.show(r.value));
+    r.addEventListener("change", () => saveCS({ [d.key]: d.fromUi ? d.fromUi(+r.value) : +r.value }));
+    box.appendChild(row);
+  }
+}
+$("#ccReset").addEventListener("click", () => { P.call_settings = {}; save({ call_settings: {} }); renderSens(); });
 $("#ccSwitch").addEventListener("click", () => { save({ crew_chief: !P.crew_chief }); renderCC(); });
 $("#ccVoice").addEventListener("change", e => save({ voice: e.target.value }));
 $("#ccRate").addEventListener("input", e => $("#ccRateV").textContent = e.target.value + " wpm");

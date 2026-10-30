@@ -46,7 +46,7 @@ def apply_project(args) -> None:
             sys.exit("no session given, and none saved for this video yet")
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
     for k in ("units", "scale", "theme", "track", "sectors", "speed_max",
-              "crew_chief", "voice", "voice_rate"):
+              "crew_chief", "voice", "voice_rate", "call_settings"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
@@ -242,6 +242,29 @@ def cmd_sync(args):
         print(f"saved to {project.save(args.video, proj)}")
 
 
+def call_settings(args) -> dict:
+    """Saved crew chief settings, with any command-line options on top."""
+    s = dict(getattr(args, "call_settings", None) or {})
+    for opt, key in (("wide", "wide_m"), ("early_brake", "early_brake_m"),
+                     ("min_loss", "min_loss"), ("max_corner_calls", "max_corner_calls"),
+                     ("consistent_within", "consistency_s")):
+        if getattr(args, opt, None) is not None:
+            s[key] = getattr(args, opt)
+    if getattr(args, "slow_corner", None) is not None:      # given in display units
+        s["slow_corner_kmh"] = args.slow_corner * (1.609344 if args.units == "mph" else 1)
+    if getattr(args, "calls_off", None) is not None:
+        off = [k.strip() for k in args.calls_off.split(",") if k.strip()]
+        bad = [k for k in off if k not in crewchief.KINDS]
+        if bad:
+            sys.exit(f"--calls-off: unknown {', '.join(bad)}; choose from {', '.join(crewchief.KINDS)}")
+        s["off"] = off
+    return s
+
+
+def chief(args, tel, tm):
+    return crewchief.CrewChief.from_settings(tel, tm, units=args.units, settings=call_settings(args))
+
+
 def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: str,
                quiet: bool = False):
     """Work out the crew chief calls for video times start..end and write the
@@ -249,7 +272,7 @@ def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: 
     if crewchief.tts_backend() is None:
         sys.exit("crew chief needs a speech engine: `say` (built into macOS) wasn't found")
     voice = getattr(args, "voice", None) or crewchief.default_voice()
-    calls = crewchief.CrewChief(tel, tm, units=args.units).calls()
+    calls = chief(args, tel, tm).calls()
 
     def prog(i, n):
         if not quiet:
@@ -285,8 +308,7 @@ def cmd_calls(args):
         placed = make_radio(args, tel, tm, offset, start, end, args.wav)
         print(f"wrote {args.wav}")
     else:
-        placed = [c for c in crewchief.CrewChief(tel, tm, units=args.units).calls()
-                  if start <= c.t - offset <= end]
+        placed = [c for c in chief(args, tel, tm).calls() if start <= c.t - offset <= end]
         for c in placed:
             c.start = c.t
     for c in placed:
@@ -363,6 +385,20 @@ def main(argv=None):
                        help="add spoken crew chief calls to the video's audio")
         r.add_argument("--voice", help="macOS voice name (see: racebox-overlay voices)")
         r.add_argument("--voice-rate", type=int, default=None, help="words per minute (default 190)")
+        r.add_argument("--wide", type=float, metavar="M",
+                       help="call 'wide' at this many metres outside your best line (default 2.5)")
+        r.add_argument("--early-brake", type=float, metavar="M",
+                       help="call 'braked early' at this many metres earlier (default 12)")
+        r.add_argument("--slow-corner", type=float, metavar="N",
+                       help="call a slow corner at this much less speed, in mph or km/h (default ~4 mph)")
+        r.add_argument("--min-loss", type=float, metavar="S",
+                       help="a corner mistake must cost at least this many seconds (default 0.1)")
+        r.add_argument("--max-corner-calls", type=int, metavar="N",
+                       help="most corner mistake calls per lap (default 2)")
+        r.add_argument("--consistent-within", type=float, metavar="S",
+                       help="laps within this spread count as consistent (default 0.35)")
+        r.add_argument("--calls-off", metavar="LIST",
+                       help="kinds of call to leave out: " + ",".join(crewchief.KINDS))
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
         s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
         p.add_argument("-o", "--output")

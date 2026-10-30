@@ -16,7 +16,12 @@ still win over anything in the file.
       "sectors": 3,
       "crew_chief": true,           add spoken crew chief calls to the render
       "voice": "Daniel",            a macOS voice (null = Daniel if installed)
-      "voice_rate": 190             words per minute
+      "voice_rate": 190,            words per minute
+      "call_settings": {            crew chief sensitivity (see rbo/crewchief.py DEFAULTS)
+        "wide_m": 3.5, "early_brake_m": 15, "slow_corner_kmh": 8,
+        "min_loss": 0.15, "max_corner_calls": 2, "consistency_s": 0.35,
+        "off": ["topspeed"]
+      }
     }
 """
 from __future__ import annotations
@@ -26,7 +31,7 @@ from pathlib import Path
 
 DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None,
-            "crew_chief": False, "voice": None, "voice_rate": 190}
+            "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {}}
 
 
 def path_for(video: str | Path) -> Path:

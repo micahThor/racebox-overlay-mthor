@@ -171,6 +171,24 @@ more earlier, or carried noticeably less speed through it. At most two
 mistakes are called per lap, so it stays a crew chief rather than a
 commentator.
 
+**Too chatty, or not enough?** Everything is adjustable, per video:
+
+| Setting | Default | Command-line option |
+|---|---|---|
+| Running wide: metres outside your best line | 2.5 m | `--wide 4` |
+| Braking early: metres earlier than your best lap | 12 m | `--early-brake 20` |
+| Slow corner: speed lost through it | ~4 mph | `--slow-corner 6` (mph or km/h, per `--units`) |
+| A corner mistake must cost at least | 0.1 s | `--min-loss 0.2` |
+| Most corner mistake calls per lap | 2 | `--max-corner-calls 1` |
+| Consistent laps: spread | 0.35 s | `--consistent-within 0.5` |
+
+Any kind of call can be switched off: `--calls-off topspeed,consistency`
+(kinds: lap, sector, theoretical, corner, good, topspeed, consistency).
+In the editor these are sliders and switches in the Crew chief tab, and the
+list of calls updates as you move them, so you can see exactly what you'll
+hear before rendering. Each check is separate: if you raise the "wide"
+distance, a slow corner on that lap can still be called as slow.
+
 Turn it on with the switch in the editor's **Crew chief** tab (where you can
 also pick the voice, set the speed, see every call and play each one), or
 from the command line:

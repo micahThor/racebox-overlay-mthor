@@ -107,6 +107,8 @@ class Studio:
             "themes": [{"id": k, "label": t.get("label", k.title()),
                         "swatch": [list(t.get(c, THEMES["carbon"][c])) for c in ("bg", "text", "accent")]}
                        for k, t in THEMES.items()],
+            "call_kinds": crewchief.KINDS,
+            "call_defaults": crewchief.DEFAULTS,
             "speech": {"available": crewchief.tts_backend() is not None,
                        "engine": crewchief.tts_backend(),
                        "voices": crewchief.list_voices(),
@@ -116,10 +118,11 @@ class Studio:
     # ------------------------------------------------------------ crew chief
 
     def _calls(self) -> list:
-        key = json.dumps([self.proj.get("units")])
+        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings")], sort_keys=True)
         if getattr(self, "_calls_key", None) != key:
-            self._calls_cache = crewchief.CrewChief(self.tel, self.tm,
-                                                    units=self.proj.get("units") or "mph").calls()
+            self._calls_cache = crewchief.CrewChief.from_settings(
+                self.tel, self.tm, units=self.proj.get("units") or "mph",
+                settings=self.proj.get("call_settings")).calls()
             self._calls_key = key
         return self._calls_cache
 
@@ -184,7 +187,7 @@ class Studio:
 
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
-                   "crew_chief", "voice", "voice_rate"}
+                   "crew_chief", "voice", "voice_rate", "call_settings"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
