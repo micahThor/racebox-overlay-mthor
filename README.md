@@ -1,6 +1,7 @@
 # racebox-overlay
 
-Burns RaceBox lap-timer data into your onboard video: lap timer with live
+Burns RaceBox lap-timer data into your onboard video (made for an
+Insta360 GO 3S, works with any camera): lap timer with live
 delta, sector times, track map with your position, speed, and a G-force
 circle (or a lean-angle gauge for bike sessions). Runs on your Mac, uses
 ffmpeg with the VideoToolbox hardware encoder.
@@ -35,13 +36,19 @@ python tools/make_sample.py sample
 racebox-overlay info sample/racebox_session.csv
 racebox-overlay preview sample/test_video.mp4 sample/racebox_session.csv --offset 12.5 --at 1:30
 open preview.png
+
+# auto-sync test inputs: a rotating-view video and a fake .insv with a gyro log
+python tools/make_sync_sample.py sample/racebox_session.csv sample
+racebox-overlay sync sample/turning_video.mp4 sample/racebox_session.csv --gyro sample/turning_video.insv
 ```
 
 ## Workflow
 
-**1. Export the video.** In Insta360 Studio, reframe your 360 clip and export
-an MP4 (H.264 or H.265, any aspect ratio — 16:9 and 9:16 both lay out fine).
-Exporting the whole clip untrimmed makes syncing easiest.
+**1. Get the video.** Copy the MP4 straight off the camera (Insta360 GO 3S,
+Ace Pro, or any camera). Use the original file rather than one exported from
+the Insta360 app: originals carry the camera's gyro log, which makes sync
+automatic. For a 360 camera (X3/X4), reframe in Insta360 Studio and export
+an MP4, and keep the original `.insv` for syncing (see below).
 
 **2. Export the data.** On racebox.pro → My Sessions → open the session →
 Export → **CSV**. (VBO also loads, but it has no lap numbers, so laps will
@@ -55,28 +62,55 @@ racebox-overlay info session.csv
 
 Lists every timed lap with sector times, best and theoretical-best lap.
 
-**4. Sync, and check with a preview.** Scrub the video to the frame where you
-cross the start/finish line at the start of a timed lap (lap 2 is usually
-easy to spot). Then:
+**4. Sync.** Insta360 cameras record their gyro inside the original MP4.
+The tool matches it against the RaceBox yaw rate (every corner is a
+fingerprint in both), so the two line up to within a frame or two:
 
 ```bash
-racebox-overlay preview video.mp4 session.csv --sync-lap 2@3:41.20 --at 3:42 --at 6:10
+racebox-overlay sync VID_20261024_103015.mp4 session.csv
 ```
 
-Look at the PNGs: the lap timer should read ~0.8 s in the first one and the
-map dot should match where you are on track. If it's slightly off, add
-`--nudge 0.2` (positive moves the data later relative to the video).
+```
+auto-sync: matching gyro recorded in VID_20261024_103015.mp4 against the RaceBox yaw rate (camera clock as a rough anchor)
+  best match: --offset 12.54, lap 1 at 0:47.162   (match 0.86)
+reuse with:  --offset 12.54
+```
 
-Other sync options:
-- `--offset 12.5` — the video starts 12.5 s after the RaceBox started logging.
-- nothing — uses the camera's recorded start time. Reframed exports often
-  lose it; point `--time-source` at the original `.insv` instead. Expect it
-  to be within a second or two, then fine-tune with `--nudge`.
+Check it with a preview:
+
+```bash
+racebox-overlay preview VID_20261024_103015.mp4 session.csv --offset 12.54 --at 0:48 --at 6:10
+```
+
+The lap timer should read ~0.8 s in the first PNG and the map dot should
+match where you are. Fine-tune with `--nudge 0.1` if needed (positive moves
+the data later relative to the video).
+
+Things to know about auto-sync:
+- Laps look alike, so a match one lap away can score nearly as well. The
+  camera's own clock (time-zone mistakes corrected) narrows it to the right
+  lap. If it's still unsure it says **NOT SURE** and lists the other
+  candidates; preview them.
+- If the file has no gyro log (an app export, another camera brand), it
+  measures sideways motion in the video instead. That's slower and a bit
+  less precise, but works on anything.
+- 360 cameras: run it on your reframed export with `--gyro` pointing at the
+  original `.insv`. The export should start where the `.insv` starts; if
+  you trimmed the start in Studio, add `--export-start 8.0` (seconds cut).
+
+Manual options, if auto-sync can't work:
+- `--sync-lap 2@3:41.20`: lap 2 crosses the start line at 3:41.20 in the video
+  (scrub to that frame yourself).
+- `--offset 12.5`: the video starts 12.5 s after the RaceBox started logging.
+
+`render` and `preview` sync automatically too when given no sync option and
+an Insta360 file (or with `--auto-sync`), but running `sync` once and reusing
+`--offset` saves repeating the work.
 
 **5. Render:**
 
 ```bash
-racebox-overlay render video.mp4 session.csv --sync-lap 2@3:41.20 -o onboard.mp4
+racebox-overlay render video.mp4 session.csv --offset 12.54 -o onboard.mp4
 ```
 
 Add `--start 3:30 --end 12:00` to render only part of the clip.
@@ -120,12 +154,14 @@ session at that track with `--track mytrack.json`. See
   distance into the lap against the reference lap.
 - `rbo/hud.py` — Pillow drawing. Panels are packed into a small "atlas"
   image each frame, so only ~25% of the frame's pixels go through the pipe.
+- `rbo/sync.py` — auto-sync: reads the IMU log from the `.insv` trailer (or
+  measures image motion), then slides it along the RaceBox yaw rate with a
+  normalised cross-correlation to find the best match.
 - `rbo/video.py` — ffmpeg crops the panels back out, overlays them, and
   encodes with VideoToolbox, copying the original audio.
 
 ## Ideas for next steps
 
-- Automatic sync by matching the Insta360's gyro to the RaceBox yaw rate.
 - A small GUI to scrub the video and set the sync point visually.
 - Lap comparison (ghost of best lap on the map, delta graph).
 - Overlay themes and a layout editor.

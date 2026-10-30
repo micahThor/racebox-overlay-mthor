@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import telemetry, timing, video
+from . import sync, telemetry, timing, video
 from .hud import Hud
 from .timing import fmt_time
 
@@ -57,6 +57,8 @@ def resolve_offset(args, tel, tm, vinfo: dict | None) -> tuple[float, str]:
     elif args.offset is not None:
         off = tel.t[0] + parse_clock(args.offset) if ":" in args.offset else tel.t[0] + float(args.offset)
         how = f"video starts {args.offset}s into the data"
+    elif args.auto_sync or args.gyro or sync.has_trailer(args.video):
+        off, how = run_auto_sync(args, tel, tm, vinfo)
     else:
         created = None
         if args.time_source:
@@ -71,6 +73,46 @@ def resolve_offset(args, tel, tm, vinfo: dict | None) -> tuple[float, str]:
     if args.nudge:
         how += f", nudged {args.nudge:+.2f}s"
     return off, how
+
+
+def clock_prior(args, tel, vinfo) -> float | None:
+    """Rough offset from the camera's recorded start time, or None."""
+    src = args.gyro or args.time_source
+    created = video.probe(src)["created"] if src else (vinfo or {}).get("created")
+    if created is None:
+        return None
+    off, how = _auto_offset(created, tel, (vinfo or {}).get("duration", 0))
+    if "doesn't match" in how:
+        return None
+    return off + (args.export_start if args.gyro else 0.0)
+
+
+def run_auto_sync(args, tel, tm, vinfo) -> tuple[float, str]:
+    prior = clock_prior(args, tel, vinfo)
+    if not args.gyro and sync.has_trailer(args.video):
+        src = f"gyro recorded in {Path(args.video).name}"
+    else:
+        src = f"gyro in {Path(args.gyro).name}" if args.gyro else "motion in the video"
+    print(f"auto-sync: matching {src} against the RaceBox yaw rate"
+          + (" (camera clock as a rough anchor)" if prior is not None else ""))
+    try:
+        r = sync.auto_sync(args.video, tel, gyro=args.gyro, export_start=args.export_start,
+                           prior=prior)
+    except sync.SyncError as e:
+        sys.exit(f"auto-sync failed: {e}\nUse --sync-lap instead.")
+
+    def where(off):
+        rel = off - tel.t[0]
+        lap1 = f", lap 1 at {clock(tm.laps[0].t_start - off)}" if tm.laps else ""
+        return f"--offset {rel:.2f}{lap1}"
+
+    print(f"  best match: {where(r.offset)}   (match {r.score:.2f})")
+    if not r.confident:
+        why = "weak match" if r.score < 0.5 else "other laps match almost as well"
+        print(f"  NOT SURE ({why}). Preview to check; other candidates:")
+        for off, sc in r.alternatives:
+            print(f"    {where(off)}   (match {sc:.2f})")
+    return r.offset, f"auto ({r.method})"
 
 
 def _auto_offset(created: float, tel, duration: float) -> tuple[float, str]:
@@ -158,6 +200,14 @@ def cmd_preview(args):
         print(f"  {clock(vt)} -> {out}")
 
 
+def cmd_sync(args):
+    args.auto_sync = True
+    vinfo = video.probe(args.video)
+    tel, tm = load_session(args)
+    off, _ = resolve_offset(args, tel, tm, vinfo)
+    print(f"\nreuse with:  --offset {off - tel.t[0]:.2f}")
+
+
 def cmd_render(args):
     vinfo, tel, tm, offset, hud = _setup(args)
     start = parse_clock(args.start) if args.start else 0.0
@@ -183,11 +233,17 @@ def main(argv=None):
         p.add_argument("video")
         p.add_argument("session", help="RaceBox CSV (or VBO) export")
         session_opts(p)
-        g = p.add_argument_group("sync (pick one; default uses the camera clock)")
+        g = p.add_argument_group("sync (pick one; default: automatic for Insta360 files, else camera clock)")
         g.add_argument("--sync-lap", metavar="N@TIME",
                        help="lap N crosses the start line at TIME in the video, e.g. 2@3:41.20")
         g.add_argument("--offset", metavar="SECONDS",
                        help="the video starts this far into the data (can be negative)")
+        g.add_argument("--auto-sync", action="store_true",
+                       help="find the offset by matching camera rotation to the RaceBox yaw rate")
+        g.add_argument("--gyro", metavar="INSV",
+                       help="original Insta360 .insv to take the camera gyro from (implies --auto-sync)")
+        g.add_argument("--export-start", type=float, default=0.0, metavar="SECONDS",
+                       help="if the export was trimmed: how far into the .insv it starts")
         g.add_argument("--time-source", metavar="FILE",
                        help="read the camera clock from this file (e.g. the original .insv)")
         g.add_argument("--nudge", type=float, default=0.0, help="shift the sync by this many seconds")
@@ -208,6 +264,10 @@ def main(argv=None):
     video_opts(p)
     p.add_argument("--at", action="append", help="video time(s) to preview, e.g. --at 1:20 --at 3:05.5")
     p.set_defaults(fn=cmd_preview)
+
+    p = sub.add_parser("sync", help="work out the video/data offset automatically")
+    video_opts(p)
+    p.set_defaults(fn=cmd_sync)
 
     p = sub.add_parser("render", help="render the finished video")
     video_opts(p)
