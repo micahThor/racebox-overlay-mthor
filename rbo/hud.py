@@ -46,6 +46,10 @@ GAUGE_START = 135.0    # speedometer arc: degrees clockwise from 3 o'clock
 GAUGE_SWEEP = 270.0
 
 
+RACE_ROWS = 12          # most rows in the race tower
+RACE_RH = 27            # row height, reference pixels
+
+
 def find_font(override: str | None = None) -> str | None:
     for p in ([override] if override else []) + FONT_CANDIDATES:
         if p and Path(p).exists():
@@ -90,13 +94,18 @@ class Hud:
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
                  hide: set[str] | None = None, theme: str | dict | None = None,
                  layout: dict | None = None, speed_max: float | None = None,
-                 supersample: int = 2, ghost: dict | None = None):
+                 supersample: int = 2, ghost: dict | None = None, race=None,
+                 race_class: bool = False):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
         self.spec = dict(tel=tel, timing=timing, width=width, height=height, units=units,
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
-                         speed_max=speed_max, supersample=supersample, ghost=ghost)
+                         speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
+                         race_class=race_class)
+        # race: an rbo.race.Race for the standings tower; race_class: only your class
+        self.race = race
+        self.race_cls = race.me.cls if race is not None and race_class else None
         # ghost: {"ref": lap index, "offset": s, "duration": s} or None for no ghost panel
         self.ghost = ghost if ghost and ghost.get("ref") is not None else None
         self.tel, self.timing = tel, timing
@@ -276,6 +285,10 @@ class Hud:
             specs.append(("gforce", "lean", 380, 262, "br", self._draw_lean))
         if self.ghost:
             specs.append(("ghost", "ghost", 480, 302, "tc" if W >= H else "mc", self._draw_ghost))
+        if self.race is not None:
+            n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
+            self.race_rows = min(n, RACE_ROWS)
+            specs.append(("race", "race", 330, 70 + self.race_rows * RACE_RH, "ml", self._draw_race))
 
         panels = []
         for key, name, rw, rh, corner, fn in specs:
@@ -289,7 +302,8 @@ class Hud:
                 px, py = float(cfg["x"]) * W, float(cfg["y"]) * H
             else:
                 px = m if corner[1] == "l" else W - m - w if corner[1] == "r" else (W - w) / 2
-                py = m if corner[0] == "t" else H - m - h if corner[0] == "b" else H * 0.40
+                py = m if corner[0] == "t" else H - m - h if corner[0] == "b" else \
+                    (H - h) / 2 if corner[1] == "l" else H * 0.40
             px = int(round(min(max(px, 0), max(W - w, 0))))
             py = int(round(min(max(py, 0), max(H - h, 0))))
             panels.append(Panel(name, key, px, py, w, h, k=k_out * self.ss, ss=self.ss, draw=fn))
@@ -503,7 +517,12 @@ class Hud:
 
         # header: lap counter and delta pill
         y = oy + S(44)
-        if st.phase == "pre" or (st.phase == "post" and not held):
+        rb = self.race.board(t) if self.race is not None else None
+        if rb and rb["started"] and not rb["finished"]:      # race laps, not RaceBox laps
+            x = pad + self.text(d, pad, y, "LAP", 17, "dim", track=2) + S(9)
+            x += self.text(d, x, y, str(rb["lap"]), 28, "white")
+            self.text(d, x + S(2), y, f"/{rb['laps']}", 18, "dim")
+        elif st.phase == "pre" or (st.phase == "post" and not held):
             self.text(d, pad, y, "OUT LAP" if st.phase == "pre" else "IN LAP", 20, "dim", track=2)
         else:
             num = st.finished.number if held else st.lap_number
@@ -664,6 +683,77 @@ class Hud:
             label = f"{abs(gap):.0f} M {'AHEAD' if gap > 0 else 'BEHIND'}"
             col = "red" if gap > 0 else "green"
         self.text(d, p.iw - S(14), y, label, 16, col, "r", track=1)
+
+    # ------------------------------------------------------------ race tower
+
+    def _draw_race(self, img, d, p, t, st):
+        S, oy, pad = self.S, p.iay, self.S(18)
+        b = self.race.board(t, self.race_cls)
+        right = p.iw - pad
+        y = oy + S(40)
+        if not b["started"]:
+            self.text(d, pad, y, "GRID", 19, "dim", track=2)
+        elif b["finished"]:
+            self.text(d, pad, y, "FINISHED", 19, "white", track=2)
+            d.rectangle([right - S(118), oy + S(19), right - S(96), oy + S(41)], fill=(255, 255, 255, 255))
+            q = S(5.5)                                   # chequered flag
+            for i in range(4):
+                for j in range(4):
+                    if (i + j) % 2:
+                        x0, y0 = right - S(118) + i * q, oy + S(19) + j * q
+                        d.rectangle([x0, y0, x0 + q, y0 + q], fill=(20, 20, 20, 255))
+        elif b["final_lap"]:
+            self.text(d, pad, y, "FINAL LAP", 19, "yellow", track=2)
+        else:
+            x = pad + self.text(d, pad, y, "LAP", 15, "dim", track=2) + S(8)
+            x += self.text(d, x, y, str(b["lap"]), 24, "white")
+            self.text(d, x + S(2), y, f"/{b['laps']}", 16, "dim")
+        if b["pos"]:
+            w = self.text(d, right, y, f"/{b['of']}", 16, "dim", "r")
+            self.text(d, right - w - S(2), y, f"P{b['pos']}", 26, "accent", "r")
+        if self.race_cls:
+            self.text(d, pad, oy + S(57), self.race_cls.upper(), 10, "dim", track=1.5)
+
+        rows, rh, top = b["rows"], S(RACE_RH), oy + S(62)
+        n = len(rows)
+        me = next((i for i, r in enumerate(rows) if r["me"]), 0)
+        if n > self.race_rows:                      # top three plus the riders around you
+            k = self.race_rows - 3
+            lo = min(max(me - k // 2, 3), n - k)
+            shown = list(range(3)) + list(range(lo, lo + k))
+        else:
+            shown = list(range(n))
+        slot = {i: j for j, i in enumerate(shown)}
+        for i in sorted(shown, key=lambda i: rows[i]["me"]):     # draw my row last, on top
+            r = rows[i]
+            src = r["row"]
+            if n > self.race_rows:                  # animate only between shown places
+                a, bb = int(math.floor(src)), int(math.ceil(src))
+                src = slot.get(a, slot[i]) + (slot.get(bb, slot[i]) - slot.get(a, slot[i])) * (src - a)
+            ry = top + src * rh
+            if r["me"]:
+                d.rounded_rectangle([S(8), ry + S(2), p.iw - S(8), ry + rh - S(2)], radius=S(7),
+                                    fill=self.tint("accent", 0.85))
+            elif i % 2 == 0:
+                d.rounded_rectangle([S(8), ry + S(2), p.iw - S(8), ry + rh - S(2)], radius=S(7),
+                                    fill=self.tint("white", 0.05))
+            base = ry + rh / 2 + S(6)
+            fg = (255, 255, 255, 255) if r["me"] else self.C["text"]
+            dim = (255, 255, 255, 210) if r["me"] else self.C["dim"]
+            self.text(d, pad + S(22), base, str(i + 1), 17, fg, "r")
+            if r["moved"]:                          # recent change: arrow up or down
+                up = r["moved"] > 0
+                col = self.C["green"] if up else self.C["red"]
+                cx, cy, a = pad + S(34), ry + rh / 2, S(5)
+                tri = [(cx - a, cy + a * 0.6), (cx + a, cy + a * 0.6), (cx, cy - a * 0.8)] if up else \
+                      [(cx - a, cy - a * 0.6), (cx + a, cy - a * 0.6), (cx, cy + a * 0.8)]
+                d.polygon(tri, fill=(255, 255, 255, 255) if r["me"] else col)
+            self.text(d, pad + S(46), base, r["number"], 15, dim)
+            self.text(d, pad + S(94), base, r["name"].upper()[:11], 17, fg, track=0.5)
+            if r["lapped"]:
+                self.text(d, right, base, "+1 LAP", 14, dim, "r")
+            elif r["gap"] is not None and i > 0:
+                self.text(d, right, base, f"+{r['gap']:.1f}", 15, dim, "r")
 
     def _draw_map(self, img, d, p, t, st):
         x = float(np.interp(t, self.tel.t, self.timing.x))

@@ -138,7 +138,7 @@ class CrewChief:
                  wide_m: float = 2.5, early_brake_m: float = 12.0, slow_apex_kmh: float = 6.0,
                  min_loss: float = 0.1, max_corner_calls: int = 2, consistency_s: float = 0.35,
                  off: set[str] | None = None, ghost_ref: int | None = None,
-                 ghost_gap_m: float = 5.0):
+                 ghost_gap_m: float = 5.0, race=None):
         """ghost_ref: index of the ghost lap when the ghost is on. Corners are then
         judged against the ghost (so the voice and the picture agree), and the
         ghost-gap calls are made."""
@@ -149,7 +149,9 @@ class CrewChief:
         self.slow_apex_kmh, self.min_loss = slow_apex_kmh, min_loss
         self.max_corner_calls = int(max_corner_calls)
         self.consistency_s = consistency_s
-        self.on = set(KINDS) - set(off or ())
+        from .race import RACE_KINDS
+        self.race = race      # race mode: race calls replace the plain lap-time call
+        self.on = (set(KINDS) | set(RACE_KINDS)) - set(off or ())
         self.laps = timing.laps
         self.corners: list[Corner] = []
         if len(self.laps) >= 2:
@@ -160,14 +162,15 @@ class CrewChief:
 
     @classmethod
     def from_settings(cls, tel: Telemetry, timing: Timing, units: str = "mph",
-                      settings: dict | None = None, ghost_ref: int | None = None) -> "CrewChief":
+                      settings: dict | None = None, ghost_ref: int | None = None,
+                      race=None) -> "CrewChief":
         s = dict(DEFAULTS)
         s.update({k: v for k, v in (settings or {}).items() if v is not None})
         return cls(tel, timing, units, wide_m=float(s["wide_m"]),
                    early_brake_m=float(s["early_brake_m"]), slow_apex_kmh=float(s["slow_corner_kmh"]),
                    min_loss=float(s["min_loss"]), max_corner_calls=int(s["max_corner_calls"]),
                    consistency_s=float(s["consistency_s"]), off=set(s["off"] or ()),
-                   ghost_ref=ghost_ref, ghost_gap_m=float(s["ghost_gap_m"]))
+                   ghost_ref=ghost_ref, ghost_gap_m=float(s["ghost_gap_m"]), race=race)
 
     # per-lap arrays against distance (metres), normalised to the best lap's length
     def _lap_profile(self, lap) -> dict:
@@ -228,9 +231,13 @@ class CrewChief:
 
     def calls(self) -> list[Call]:
         out: list[Call] = []
+        if self.race is not None:
+            from .race import race_calls
+            out += race_calls(self.race, self.on, self.units)
         laps = self.laps
         if not laps:
-            return out
+            return sorted(out, key=lambda c: (c.t, c.priority))
+        lap_on = "lap" in self.on and self.race is None
         best_so_far = None
         best_sectors: list[float] | None = None
         top = None
@@ -249,7 +256,7 @@ class CrewChief:
                     if sv < best_sectors[i] - 0.005:
                         if "sector" not in self.on:
                             continue
-                        if i == len(secs) - 1 and "lap" in self.on:
+                        if i == len(secs) - 1 and lap_on:
                             final_purple = True          # said as part of the lap call
                         else:
                             at = lap.splits[i] if i < len(secs) - 1 else lap.t_end
@@ -299,12 +306,12 @@ class CrewChief:
                 theo = sum(best_sectors)
                 if theo < best_so_far.time - 0.15 and (last_theo is None or theo < last_theo - 0.05):
                     msg = f"There's a {say_laptime(theo)} in you."
-                    if "lap" in self.on:
+                    if lap_on:
                         parts.append(msg)
                     else:
                         out.append(Call(lap.t_end + 1.2, msg, "theoretical", 2, n))
                     last_theo = theo
-            if "lap" in self.on:
+            if lap_on:
                 out.append(Call(lap.t_end + 0.8, " ".join(parts), "lap", 1, n))
 
             # ---- consistency streaks
@@ -593,7 +600,8 @@ def build_track(calls: list[Call], t0: float, t1: float, voice: str | None = Non
         for c in sorted([c for c in cand if c.priority == prio], key=lambda c: c.t):
             start = max(c.t, t0)
             limit = c.t + {"lap": 6.0, "sector": 3.0, "corner": 5.0, "topspeed": 3.0,
-                           "consistency": 12.0}.get(c.kind, 4.0)
+                           "consistency": 12.0, "racepos": 4.0, "raceline": 7.0,
+                           "racegap": 7.0}.get(c.kind, 4.0)
             moved = True
             while moved:
                 moved = False

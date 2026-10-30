@@ -48,7 +48,8 @@ def apply_project(args) -> None:
             sys.exit("no session given, and none saved for this video yet")
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
     for k in ("units", "scale", "theme", "track", "sectors", "speed_max",
-              "crew_chief", "voice", "voice_rate", "call_settings", "ghost"):
+              "crew_chief", "voice", "voice_rate", "call_settings", "ghost",
+              "race", "race_source", "race_number", "race_class"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
@@ -157,6 +158,34 @@ def _auto_offset(created: float, tel, duration: float) -> tuple[float, str]:
     return created + best * 3600, f"camera clock {stamp} UTC{note}; typically within a second or two"
 
 
+def race_cache(args) -> Path:
+    base = getattr(args, "video", None) or args.session
+    return Path(base).with_name(Path(base).name + ".race.json")
+
+
+def load_race(args, tel, tm, quiet: bool = False):
+    """The Race for race mode, or None when it's off."""
+    if not getattr(args, "race", None):
+        return None
+    from . import race as racemod
+    if not args.race_source:
+        sys.exit("race mode needs the Speedhive session: --race-source "
+                 "https://speedhive.mylaps.com/sessions/<number>")
+    try:
+        data = racemod.load(args.race_source, race_cache(args))
+        if not args.race_number:
+            rows = sorted(data["classification"]["rows"], key=lambda r: r["position"])
+            sys.exit("race mode needs your start number: --race-number N. Riders: "
+                     + ", ".join(f"#{str(r['startNumber']).strip()} {r['name'].strip()}" for r in rows))
+        r = racemod.Race(data, tm, str(args.race_number))
+    except racemod.RaceError as e:
+        sys.exit(f"race mode: {e}")
+    if not quiet:
+        print(f"race: #{r.me.number} {r.me.name}, P{r.me.grid or '?'} on the grid -> P{r.me.finish_pos}; "
+              f"{r.aligned_laps} line crossings matched your RaceBox laps (within {r.align_error:.2f} s)")
+    return r
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_info(args):
@@ -202,6 +231,7 @@ def _setup(args):
     tel, tm = load_session(args)
     offset, how = resolve_offset(args, tel, tm, vinfo)
     hide = set(filter(None, (args.hide or "").split(",")))
+    args._race = race = load_race(args, tel, tm)
     ghost_cfg = None
     if args.ghost:
         from .ghost import choose_ref
@@ -215,7 +245,8 @@ def _setup(args):
     try:
         hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
-                  speed_max=args.speed_max, ghost=ghost_cfg)
+                  speed_max=args.speed_max, ghost=ghost_cfg, race=race,
+                  race_class=bool(args.race_class))
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -267,9 +298,11 @@ def call_settings(args) -> dict:
         s["slow_corner_kmh"] = args.slow_corner * (1.609344 if args.units == "mph" else 1)
     if getattr(args, "calls_off", None) is not None:
         off = [k.strip() for k in args.calls_off.split(",") if k.strip()]
-        bad = [k for k in off if k not in crewchief.KINDS]
+        from .race import RACE_KINDS
+        kinds = list(crewchief.KINDS) + list(RACE_KINDS)
+        bad = [k for k in off if k not in kinds]
         if bad:
-            sys.exit(f"--calls-off: unknown {', '.join(bad)}; choose from {', '.join(crewchief.KINDS)}")
+            sys.exit(f"--calls-off: unknown {', '.join(bad)}; choose from {', '.join(kinds)}")
         s["off"] = off
     return s
 
@@ -279,8 +312,11 @@ def chief(args, tel, tm, offset: float | None = None, duration: float | None = N
     if getattr(args, "ghost", None) and offset is not None and duration is not None:
         from .ghost import choose_ref
         ghost_ref = choose_ref(tm, offset, duration)
+    race = getattr(args, "_race", None)
+    if race is None and getattr(args, "race", None):
+        race = args._race = load_race(args, tel, tm)
     return crewchief.CrewChief.from_settings(tel, tm, units=args.units, settings=call_settings(args),
-                                             ghost_ref=ghost_ref)
+                                             ghost_ref=ghost_ref, race=race)
 
 
 def make_radio(args, tel, tm, offset: float, start: float, end: float, out_wav: str,
@@ -335,6 +371,26 @@ def cmd_calls(args):
         print(f"  {clock(c.start - offset):>10}  {c.text}")
     if not placed:
         print("  no calls in this part of the video")
+
+
+def cmd_race(args):
+    """Check a race against a RaceBox session, without any video."""
+    if args.sectors is None:
+        args.sectors = 3
+    tel, tm = load_session(args)
+    args.video, args.race = None, True
+    args.race_source, args.race_number, args.units = args.source, args.number, args.units or "mph"
+    r = load_race(args, tel, tm, quiet=True)
+    print(r.summary())
+    print("\n  running order after each of your laps:")
+    for i, c in enumerate(r.me.cross):
+        order = r.order_at(c + 0.05)
+        print(f"  lap {i + 1}: " + " ".join(("[" + n + "]") if n == r.me.number else n for n in order))
+    args.call_settings, args.ghost = {}, None
+    print("\n  race calls (time into the RaceBox session):")
+    from .race import race_calls
+    for c in race_calls(r, units=args.units):
+        print(f"  {clock(c.t - tel.t[0]):>10}  {c.text}")
 
 
 def cmd_render(args):
@@ -422,6 +478,14 @@ def main(argv=None):
                        help="laps within this spread count as consistent (default 0.35)")
         r.add_argument("--calls-off", metavar="LIST",
                        help="kinds of call to leave out: " + ",".join(crewchief.KINDS))
+        rc = p.add_argument_group("race mode (MYLAPS Speedhive)")
+        rc.add_argument("--race", action=argparse.BooleanOptionalAction, default=None,
+                        help="standings tower and race calls (needs --race-source and --race-number once)")
+        rc.add_argument("--race-source", metavar="LINK", default=None,
+                        help="Speedhive session link or number, or a saved race JSON")
+        rc.add_argument("--race-number", metavar="N", default=None, help="your start number in that race")
+        rc.add_argument("--race-class", action=argparse.BooleanOptionalAction, default=None,
+                        help="tower shows only your class")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
         s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
         p.add_argument("-o", "--output")
@@ -458,6 +522,14 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true", help="don't open a browser window")
     p.set_defaults(fn=cmd_gui)
+
+    p = sub.add_parser("race", help="check a Speedhive race against a RaceBox session (no video needed)")
+    p.add_argument("session", help="RaceBox CSV/VBO from the race")
+    p.add_argument("source", help="Speedhive session link or number, or a saved race JSON")
+    p.add_argument("--number", required=True, help="your start number")
+    p.add_argument("--units", choices=["mph", "kmh"], default=None)
+    session_opts(p)
+    p.set_defaults(fn=cmd_race)
 
     p = sub.add_parser("render", help="render the finished video")
     video_opts(p)

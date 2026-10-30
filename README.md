@@ -18,6 +18,8 @@ The overlay has these panels, each movable, resizable and optional:
   `--speed-max` or in the editor.
 - **Ghost lap** (optional): your best lap's footage in a picture-in-picture,
   matched to your position on track.
+- **Race mode** (optional): a live standings tower from MYLAPS Speedhive
+  timing that reorders as passes happen, with race calls on the radio.
 - **G-force** circle with a trail (or a **lean angle** gauge for bike-mode
   RaceBox sessions).
 
@@ -232,6 +234,50 @@ another with `--voice` or in the editor. More voices can be downloaded in
 System Settings → Accessibility → Spoken Content → System voice → Manage
 Voices.
 
+## Race mode
+
+For races timed by MYLAPS. Turn it on for a race and leave it off for
+practice; it's a separate switch from everything else.
+
+```
+racebox-overlay race SESSION.csv https://speedhive.mylaps.com/sessions/12935135 --number 96
+racebox-overlay render VID.mp4 --race --race-source https://speedhive.mylaps.com/sessions/12935135 --race-number 96
+```
+
+Or open the editor's **Race** tab, switch it on, paste the Speedhive link and
+pick your number. Settings save with the video, so after that `--race` or
+`--no-race` is enough.
+
+- **Standings tower:** lap X/Y, FINAL LAP and FINISHED with a chequered flag,
+  your position, every rider's number, name and gap to the rider ahead
+  (`+1 LAP` when lapped). Rows slide to their new places when a pass
+  happens, with green/red arrows for a few seconds. `--race-class` (or the
+  checkbox) shows only your class. Drag it like any panel. The lap counter
+  on the lap timer switches to race laps too.
+- **Race calls** (with the crew chief radio on; they replace the plain lap
+  call): how the start went against your grid slot; at the line, lap time,
+  position and laps to go, "Last lap!", your best lap, fastest lap of the
+  race; "You're past Eifert. P nine." and "Eifert is through. P ten."; the
+  gap to the rider ahead (closing or pulling away) and to anyone right
+  behind; blue flags before the leader laps you; and at the flag, your
+  overall and class finish and places made from the grid. Each group can be
+  switched off (`--calls-off raceline,racepos,racegap`).
+
+How it works: Speedhive records when every rider crosses the timing line.
+Your own crossings are the same moments as your RaceBox laps, so the race
+lines itself up with your data automatically (the editor shows how well
+they matched). Positions at the line are exact. Between crossings, each
+rider's progress is estimated from their lap time and the shape of your lap,
+and yours comes from your RaceBox, so a pass shows up about where it
+happened instead of at the next line. It's an estimate: a pass made and
+undone within one lap can't be seen. The results CSV isn't enough (it only
+has final positions), so give the session link; it's downloaded once and
+saved next to the video as `VIDEO.race.json`.
+
+To try it without a race of your own: `python tools/make_race_sample.py sample/`
+makes a RaceBox session with the lap times of #96 in Speedhive session
+12935135.
+
 ## Themes
 
 Four built in: **carbon** (dark cards, default), **daylight** (light cards
@@ -306,6 +352,9 @@ session at that track with `--track mytrack.json`. See
 - `rbo/crewchief.py` — finds corners on your best lap, compares each lap with
   it (time, line, braking point, corner speed), turns findings into calls,
   speaks them, adds the radio sound and schedules them so none overlap.
+- `rbo/race.py` — race mode: downloads Speedhive timing, lines it up with
+  your RaceBox laps, estimates everyone's position between crossings, finds
+  passes (a new order has to hold 1.5 s), and writes the race calls.
 - `rbo/themes.py`, `rbo/project.py` — themes, and the per-video settings file.
 - `rbo/video.py` — ffmpeg crops the panels back out, overlays them, and
   encodes with VideoToolbox, copying the original audio.

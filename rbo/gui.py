@@ -78,10 +78,55 @@ class Studio:
         ref = choose_ref(self.tm, off, self.vinfo["duration"])
         return None if ref is None else {"ref": ref, "offset": off, "duration": self.vinfo["duration"]}
 
+    def _race_key(self):
+        p = self.proj
+        return [bool(p.get("race")), p.get("race_source"), str(p.get("race_number") or "")]
+
+    def race(self):
+        """The Race when race mode is on and loads, else None (see race_error)."""
+        from . import race as racemod
+        key = json.dumps(self._race_key())
+        if getattr(self, "_race_k", None) == key:
+            return self._race
+        self._race, self.race_error, self._race_data = None, None, None
+        p = self.proj
+        if p.get("race_source"):
+            try:
+                cache = Path(self.video_path).with_name(Path(self.video_path).name + ".race.json")
+                self._race_data = racemod.load(p["race_source"], cache)
+                if p.get("race") and p.get("race_number"):
+                    self._race = racemod.Race(self._race_data, self.tm, str(p["race_number"]))
+                elif p.get("race"):
+                    self.race_error = "pick your rider"
+            except (racemod.RaceError, OSError, ValueError, KeyError) as e:
+                self.race_error = str(e)
+        elif p.get("race"):
+            self.race_error = "paste your Speedhive session link"
+        self._race_k = key
+        return self._race
+
+    def race_info(self) -> dict:
+        r = self.race()
+        data = getattr(self, "_race_data", None)
+        riders = []
+        if data:
+            riders = [{"number": str(x.get("startNumber", "")).strip(), "name": " ".join(str(x.get("name", "")).split()),
+                       "cls": str(x.get("resultClass", "")).strip(), "pos": x.get("position")}
+                      for x in sorted(data["classification"]["rows"], key=lambda x: x["position"])]
+        out = {"error": self.race_error, "riders": riders, "loaded": r is not None}
+        if r is not None:
+            out.update(me={"number": r.me.number, "name": r.me.name, "cls": r.me.cls,
+                           "grid": r.me.grid, "finish": r.me.finish_pos},
+                       laps=r.total_laps, aligned=r.aligned_laps, align_error=round(r.align_error, 3),
+                       summary=r.summary().splitlines(),
+                       start_vt=r.start - self.t0 - float(self.proj["offset"]))
+        return out
+
     def hud(self, width: int, height: int) -> Hud:
         key = json.dumps([width, height, self.proj.get("theme"), self.proj.get("units"),
                           self.proj.get("scale"), self.proj.get("speed_max"),
-                          self.proj.get("layout"), self.ghost_cfg()], sort_keys=True)
+                          self.proj.get("layout"), self.ghost_cfg(), self._race_key(),
+                          bool(self.proj.get("race_class"))], sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
             if h is None:
@@ -90,7 +135,8 @@ class Studio:
                 h = Hud(self.tel, self.tm, width, height, units=self.proj.get("units") or "mph",
                         scale=float(self.proj.get("scale") or 1.0), theme=self.proj.get("theme"),
                         layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"),
-                        ghost=self.ghost_cfg())
+                        ghost=self.ghost_cfg(), race=self.race(),
+                        race_class=bool(self.proj.get("race_class")))
                 self._huds[key] = h
             return h
 
@@ -118,6 +164,8 @@ class Studio:
                         "swatch": [list(t.get(c, THEMES["carbon"][c])) for c in ("bg", "text", "accent")]}
                        for k, t in THEMES.items()],
             "call_kinds": crewchief.KINDS,
+            "race_kinds": __import__("rbo.race", fromlist=["RACE_KINDS"]).RACE_KINDS,
+            "race": self.race_info(),
             "call_defaults": crewchief.DEFAULTS,
             "speech": {"available": crewchief.tts_backend() is not None,
                        "engine": crewchief.tts_backend(),
@@ -129,11 +177,13 @@ class Studio:
 
     def _calls(self) -> list:
         g = self.ghost_cfg()
-        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings"), g], sort_keys=True)
+        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings"), g, self._race_key()],
+                         sort_keys=True)
         if getattr(self, "_calls_key", None) != key:
             self._calls_cache = crewchief.CrewChief.from_settings(
                 self.tel, self.tm, units=self.proj.get("units") or "mph",
-                settings=self.proj.get("call_settings"), ghost_ref=g["ref"] if g else None).calls()
+                settings=self.proj.get("call_settings"), ghost_ref=g["ref"] if g else None,
+                race=self.race()).calls()
             self._calls_key = key
         return self._calls_cache
 
@@ -174,6 +224,8 @@ class Studio:
         names.append(("speed", "Speed"))
         if self.proj.get("ghost"):
             names.append(("ghost", "Ghost lap"))
+        if self.race() is not None:
+            names.append(("race", "Race standings"))
         if self.tel.is_bike:
             names.append(("gforce", "Lean angle"))
         elif self.tel.g_lat is not None:
@@ -215,14 +267,15 @@ class Studio:
 
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
-                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost"}
+                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost",
+                   "race", "race_source", "race_number", "race_class"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
         if "offset" in changes:
             self.offset_source = "set by you"
         return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": self._ghost_ref(),
-                "panels": self._panel_keys()}
+                "panels": self._panel_keys(), "race": self.race_info()}
 
     def sync_lap(self, n: int, vt: float) -> dict:
         lap = next((l for l in self.tm.laps if l.number == n), None)
@@ -259,7 +312,8 @@ class Studio:
                 h = Hud(self.tel, self.tm, self.vinfo["width"], self.vinfo["height"],
                         units=self.proj.get("units") or "mph", scale=float(self.proj.get("scale") or 1),
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
-                        speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg())
+                        speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
+                        race=self.race(), race_class=bool(self.proj.get("race_class")))
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")

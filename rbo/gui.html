@@ -210,6 +210,7 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
       <button role="tab" aria-selected="true" data-tab="sync">Sync</button>
       <button role="tab" aria-selected="false" data-tab="look">Look &amp; layout</button>
       <button role="tab" aria-selected="false" data-tab="cc">Crew chief</button>
+      <button role="tab" aria-selected="false" data-tab="race">Race</button>
     </div>
 
     <div class="pane on" id="pane-sync">
@@ -293,6 +294,32 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
         <h2>Calls in this video <span class="count" id="ccCount"></span></h2>
         <p>Click a time to jump there, or play a call to hear it.</p>
         <ul class="calls" id="ccList"></ul>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-race">
+      <button class="switch" id="rcSwitch" role="switch" aria-checked="false">
+        <span><b>Race mode</b><small id="rcState">Off</small></span>
+        <span class="knob" aria-hidden="true"></span>
+      </button>
+      <p style="margin-top:10px">For races timed by MYLAPS: a live standings tower that reorders as passes
+        happen, and the crew chief calls your position, laps to go, passes and gaps. Leave it off for
+        practice.</p>
+      <div class="cc-body" id="rcBody">
+        <h2>Speedhive session</h2>
+        <p>Paste the link to the race on speedhive.mylaps.com. It's downloaded once and saved next to the video.</p>
+        <div class="row"><input type="text" id="rcSrc" placeholder="https://speedhive.mylaps.com/sessions/…"
+          style="flex:1;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:7px 8px"
+          aria-label="Speedhive session link"><button id="rcLoad">Load</button></div>
+        <h2>You are</h2>
+        <div class="row"><select id="rcRider" aria-label="Your rider" style="flex:1"></select></div>
+        <label class="row" style="margin-top:10px;gap:8px"><input type="checkbox" id="rcClass">
+          Standings show only my class</label>
+        <div class="result" id="rcInfo"></div>
+        <h2>Race calls</h2>
+        <div class="kinds" id="rcKinds"></div>
+        <p class="hint" style="margin-top:8px">Race calls play when the crew chief radio is on; they replace
+          the plain lap-time call. <span id="rcJump"></span></p>
       </div>
     </div>
 
@@ -425,13 +452,18 @@ async function save(changes) {
     const r = await api("/api/project", changes);
     P.offset = r.offset;
     if (r.ghost_ref !== undefined) S.ghost_ref = r.ghost_ref;
-    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes) renderLook(); }
+    if (r.race) S.race = r.race;
+    const raceCh = ["race", "race_source", "race_number", "race_class"].some(k => k in changes);
+    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || raceCh) renderLook(); }
+    if (raceCh) renderRace();
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
     $("#saved").classList.add("ok");
   } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
   if ("offset" in changes) { S.offset_source = "set by you"; }
   renderSync(); renderTimeline(); refreshHud();
-  if ("offset" in changes || "units" in changes || "call_settings" in changes || "ghost" in changes) loadCalls();
+  if ("offset" in changes || "units" in changes || "call_settings" in changes || "ghost" in changes ||
+      "race" in changes || "race_source" in changes || "race_number" in changes) loadCalls();
+  if ("offset" in changes && S.race && S.race.loaded) renderRace();
   if ("units" in changes) renderSens();
 }
 
@@ -613,7 +645,8 @@ document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click",
 /* ---------- crew chief ---------- */
 let CALLS = [];
 const KIND = { lap: "Lap", sector: "Sector", corner: "Corner", topspeed: "Top speed", consistency: "Consistency",
-               ghost: "Ghost", theoretical: "Theoretical best" };
+               ghost: "Ghost", theoretical: "Theoretical best", raceline: "Race", racepos: "Race position",
+               racegap: "Race gap" };
 async function loadCalls() {
   CALLS = await api("/api/calls");
   $("#ccCount").textContent = `(${CALLS.length})`;
@@ -725,6 +758,52 @@ $("#ccVoice").addEventListener("change", e => save({ voice: e.target.value }));
 $("#ccRate").addEventListener("input", e => $("#ccRateV").textContent = e.target.value + " wpm");
 $("#ccRate").addEventListener("change", e => save({ voice_rate: +e.target.value }));
 
+/* ---------- race mode ---------- */
+function renderRace() {
+  const R = S.race || {}, on = !!P.race;
+  $("#rcSwitch").setAttribute("aria-checked", on);
+  $("#rcState").textContent = !on ? "Off" : R.loaded ? `On: #${R.me.number} ${R.me.name}, P${R.me.grid ?? "?"} → P${R.me.finish}`
+    : (R.error || "Set it up below");
+  $("#rcBody").classList.toggle("off", !on);
+  $("#rcSrc").value = P.race_source || "";
+  const sel = $("#rcRider");
+  sel.innerHTML = R.riders.length ? '<option value="">Choose your number…</option>' +
+    R.riders.map(r => `<option value="${r.number}">#${r.number} ${r.name} (${r.cls}), P${r.pos}</option>`).join("")
+    : "<option>Load the session first</option>";
+  sel.disabled = !R.riders.length;
+  sel.value = P.race_number || "";
+  $("#rcClass").checked = !!P.race_class;
+  const info = $("#rcInfo");
+  if (R.loaded) {
+    const ok = R.aligned >= 2;
+    info.innerHTML = `<div>${R.laps} laps. Lined up with your RaceBox: ${R.aligned} line crossings matched within ${R.align_error.toFixed(2)} s.</div>` +
+      R.summary.slice(2).map(l => `<div>${l.trim()}</div>`).join("") + (ok ? "" : '<div class="warn">Check the rider number.</div>');
+    $("#rcJump").innerHTML = R.start_vt >= 0 && R.start_vt <= S.video.duration ? '<a href="#" id="rcGo">Jump to the start</a>' : "";
+    const go = $("#rcGo"); if (go) go.addEventListener("click", e => { e.preventDefault(); seek(R.start_vt - 3); });
+  } else {
+    info.innerHTML = on && R.error ? `<span class="warn">${R.error}</span>` : "";
+    $("#rcJump").textContent = "";
+  }
+  const cur = cs(), kinds = $("#rcKinds"); kinds.innerHTML = "";
+  for (const [k, label] of Object.entries(S.race_kinds)) {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="checkbox" ${cur.off.includes(k) ? "" : "checked"}> ${label}`;
+    l.querySelector("input").addEventListener("change", e => {
+      const off = new Set(cs().off); e.target.checked ? off.delete(k) : off.add(k); saveCS({ off: [...off] });
+    });
+    kinds.appendChild(l);
+  }
+}
+async function saveRace(ch) {
+  $("#rcInfo").textContent = "Loading…";
+  await save(ch);
+}
+$("#rcSwitch").addEventListener("click", () => saveRace({ race: !P.race }));
+$("#rcLoad").addEventListener("click", () => saveRace({ race_source: $("#rcSrc").value.trim(), race: true }));
+$("#rcSrc").addEventListener("keydown", e => { if (e.key === "Enter") $("#rcLoad").click(); });
+$("#rcRider").addEventListener("change", e => saveRace({ race_number: e.target.value || null }));
+$("#rcClass").addEventListener("change", e => save({ race_class: e.target.checked }));
+
 /* ---------- render ---------- */
 let polling = null;
 $("#renderBtn").addEventListener("click", async () => {
@@ -772,7 +851,7 @@ function showRender(st) {
     const l = S.data.laps.find(x => x.n === +tr.dataset.lap); seek(Math.max(l.start - P.offset, 0));
   }));
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
-  renderSync(); renderLook(); renderTimeline(); renderCC(); loadCalls();
+  renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls();
   showRender(await api("/api/render"));
   refreshHud();
 })();

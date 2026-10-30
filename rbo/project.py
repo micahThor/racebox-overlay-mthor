@@ -22,7 +22,11 @@ still win over anything in the file.
         "wide_m": 3.5, "early_brake_m": 15, "slow_corner_kmh": 8,
         "min_loss": 0.15, "max_corner_calls": 2, "consistency_s": 0.35,
         "off": ["topspeed"]
-      }
+      },
+      "race": true,                 race mode: standings tower and race calls
+      "race_source": "https://speedhive.mylaps.com/sessions/12935135",
+      "race_number": "96",          your start number in that race
+      "race_class": false           tower shows only your class
     }
 """
 from __future__ import annotations
@@ -33,7 +37,8 @@ from pathlib import Path
 DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None,
             "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {},
-            "ghost": False}
+            "ghost": False, "race": False, "race_source": None, "race_number": None,
+            "race_class": False}
 
 
 def path_for(video: str | Path) -> Path:
