@@ -17,6 +17,10 @@ from PIL import Image
 from .hud import Hud
 
 
+class RenderError(Exception):
+    pass
+
+
 def need(tool: str) -> str:
     path = shutil.which(tool)
     if not path:
@@ -92,13 +96,20 @@ def encoder_args(codec: str, width: int, height: int, fps: float, bitrate: str |
 
 def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
            end: float | None = None, codec: str = "h264", bitrate: str | None = None,
-           quality: str = "fast") -> None:
+           quality: str = "fast", progress=None, cancel: threading.Event | None = None) -> None:
+    """progress(done, total, fps) is called every ~60 frames (default: print).
+    Setting `cancel` stops the render early."""
     info = probe(video)
     fps = info["fps"]
     end = min(end or info["duration"], info["duration"])
     n_frames = int((end - start) * fps)
     if n_frames <= 0:
-        sys.exit("nothing to render: check --start/--end")
+        raise RenderError("nothing to render: check --start/--end")
+
+    def show(i, n, rate):
+        eta = (n - i) / rate if rate else 0
+        print(f"\r  frame {i}/{n}  {rate:5.1f} fps  ETA {eta / 60:4.1f} min ", end="", flush=True)
+    progress = progress or show
 
     # one rawvideo stream carries all panels stacked; crop each back out
     parts = [f"[1:v]split={len(hud.panels)}" + "".join(f"[a{i}]" for i in range(len(hud.panels)))]
@@ -147,15 +158,12 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     spf = 1 / float(fps)
     try:
         for i in range(n_frames):
-            if proc.poll() is not None:
+            if proc.poll() is not None or (cancel is not None and cancel.is_set()):
                 break
             q.put(hud.render_atlas(start + i * spf + offset).tobytes())
             if i % 60 == 0 or i == n_frames - 1:
                 el = time.time() - t0
-                rate = (i + 1) / el if el else 0
-                eta = (n_frames - i - 1) / rate if rate else 0
-                print(f"\r  frame {i + 1}/{n_frames}  {rate:5.1f} fps  ETA {eta / 60:4.1f} min ",
-                      end="", flush=True)
+                progress(i + 1, n_frames, (i + 1) / el if el else 0.0)
     except KeyboardInterrupt:
         print("\n  stopped; the partial file may not play")
     finally:
@@ -163,8 +171,12 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         threads[0].join()
         proc.wait()
         threads[1].join(timeout=5)
-    print()
+    if progress is show:
+        print()
+    if cancel is not None and cancel.is_set():
+        raise RenderError("render cancelled; the partial file may not play")
     if proc.returncode:
         tail = "".join(err)[-2000:]
-        sys.exit(f"ffmpeg failed (exit {proc.returncode}):\n{tail}")
-    print(f"  done in {(time.time() - t0) / 60:.1f} min -> {out}")
+        raise RenderError(f"ffmpeg failed (exit {proc.returncode}):\n{tail}")
+    if progress is show:
+        print(f"  done in {(time.time() - t0) / 60:.1f} min -> {out}")

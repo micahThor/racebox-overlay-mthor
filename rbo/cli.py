@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import sync, telemetry, timing, video
+from . import project, sync, telemetry, timing, video
 from .hud import Hud
 from .timing import fmt_time
 
@@ -34,6 +34,22 @@ def clock(s: float) -> str:
 
 
 # ---------------------------------------------------------------- loading
+
+def apply_project(args) -> None:
+    """Fill options the user didn't give from <video>.overlay.json (saved by the GUI)."""
+    proj = project.load(args.video) if getattr(args, "video", None) and not args.no_project \
+        else dict(project.DEFAULTS, layout={})
+    args.project = proj
+    if not args.session:
+        args.session = proj.get("session")
+        if not args.session:
+            sys.exit("no session given, and none saved for this video yet")
+        print(f"session: {args.session} (from {project.path_for(args.video).name})")
+    for k in ("units", "scale", "theme", "track", "sectors"):
+        if getattr(args, k, None) is None:
+            setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
+    args.layout = proj.get("layout") or {}
+
 
 def load_session(args):
     tel = telemetry.load(args.session)
@@ -57,7 +73,12 @@ def resolve_offset(args, tel, tm, vinfo: dict | None) -> tuple[float, str]:
     elif args.offset is not None:
         off = tel.t[0] + parse_clock(args.offset) if ":" in args.offset else tel.t[0] + float(args.offset)
         how = f"video starts {args.offset}s into the data"
-    elif args.auto_sync or args.gyro or sync.has_trailer(args.video):
+    elif args.auto_sync or args.gyro:
+        off, how = run_auto_sync(args, tel, tm, vinfo)
+    elif getattr(args, "project", {}).get("offset") is not None:
+        off = tel.t[0] + float(args.project["offset"])
+        how = f"saved sync from {project.path_for(args.video).name} (offset {args.project['offset']:.2f}s)"
+    elif sync.has_trailer(args.video):
         off, how = run_auto_sync(args, tel, tm, vinfo)
     else:
         created = None
@@ -136,6 +157,8 @@ def _auto_offset(created: float, tel, duration: float) -> tuple[float, str]:
 # ---------------------------------------------------------------- commands
 
 def cmd_info(args):
+    if args.sectors is None:
+        args.sectors = 3
     tel, tm = load_session(args)
     meta = " · ".join(f"{k}: {v}" for k, v in tel.meta.items() if k in ("Data Source", "Track", "Date UTC"))
     start = datetime.fromtimestamp(tel.t[0], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -171,12 +194,16 @@ def cmd_info(args):
 
 
 def _setup(args):
+    apply_project(args)
     vinfo = video.probe(args.video)
     tel, tm = load_session(args)
     offset, how = resolve_offset(args, tel, tm, vinfo)
     hide = set(filter(None, (args.hide or "").split(",")))
-    hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
-              font=args.font, hide=hide)
+    try:
+        hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
+                  font=args.font, hide=hide, theme=args.theme, layout=args.layout)
+    except ValueError as e:
+        sys.exit(str(e))
     print(f"sync: {how}")
     if tm.laps:
         v1 = tm.laps[0].t_start - offset
@@ -202,10 +229,15 @@ def cmd_preview(args):
 
 def cmd_sync(args):
     args.auto_sync = True
+    apply_project(args)
     vinfo = video.probe(args.video)
     tel, tm = load_session(args)
     off, _ = resolve_offset(args, tel, tm, vinfo)
     print(f"\nreuse with:  --offset {off - tel.t[0]:.2f}")
+    if args.save:
+        proj = args.project
+        proj.update(session=str(Path(args.session).resolve()), offset=round(off - tel.t[0], 3))
+        print(f"saved to {project.save(args.video, proj)}")
 
 
 def cmd_render(args):
@@ -214,7 +246,15 @@ def cmd_render(args):
     end = parse_clock(args.end) if args.end else None
     out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
     print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
-    video.render(args.video, hud, offset, out, start, end, args.codec, args.bitrate, args.quality)
+    try:
+        video.render(args.video, hud, offset, out, start, end, args.codec, args.bitrate, args.quality)
+    except video.RenderError as e:
+        sys.exit(str(e))
+
+
+def cmd_gui(args):
+    from .gui import serve
+    serve(args.video, args.session, port=args.port, open_browser=not args.no_browser)
 
 
 def main(argv=None):
@@ -224,14 +264,17 @@ def main(argv=None):
 
     def session_opts(p):
         p.add_argument("--track", help="track JSON with start_finish / sectors points")
-        p.add_argument("--sectors", type=int, default=3,
+        p.add_argument("--sectors", type=int, default=None,
                        help="auto-split each lap into N sectors when no track file (default 3, 0 = off)")
         p.add_argument("--delta-ref", choices=["best-so-far", "session-best"], default="best-so-far",
                        help="what the live delta compares against")
 
     def video_opts(p):
         p.add_argument("video")
-        p.add_argument("session", help="RaceBox CSV (or VBO) export")
+        p.add_argument("session", nargs="?",
+                       help="RaceBox CSV (or VBO) export; optional once saved by the GUI")
+        p.add_argument("--no-project", action="store_true",
+                       help="ignore settings saved next to the video by the GUI")
         session_opts(p)
         g = p.add_argument_group("sync (pick one; default: automatic for Insta360 files, else camera clock)")
         g.add_argument("--sync-lap", metavar="N@TIME",
@@ -248,8 +291,9 @@ def main(argv=None):
                        help="read the camera clock from this file (e.g. the original .insv)")
         g.add_argument("--nudge", type=float, default=0.0, help="shift the sync by this many seconds")
         s = p.add_argument_group("look")
-        s.add_argument("--units", choices=["mph", "kmh"], default="mph")
-        s.add_argument("--scale", type=float, default=1.0, help="HUD size multiplier")
+        s.add_argument("--units", choices=["mph", "kmh"], default=None, help="default mph")
+        s.add_argument("--scale", type=float, default=None, help="HUD size multiplier")
+        s.add_argument("--theme", help="carbon, daylight, neon, minimal, or a theme .json file")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
         s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
         p.add_argument("-o", "--output")
@@ -267,7 +311,15 @@ def main(argv=None):
 
     p = sub.add_parser("sync", help="work out the video/data offset automatically")
     video_opts(p)
+    p.add_argument("--save", action="store_true", help="save the result next to the video")
     p.set_defaults(fn=cmd_sync)
+
+    p = sub.add_parser("gui", help="open the sync & layout editor in your browser")
+    p.add_argument("video")
+    p.add_argument("session", nargs="?", help="RaceBox CSV/VBO (optional once saved)")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-browser", action="store_true", help="don't open a browser window")
+    p.set_defaults(fn=cmd_gui)
 
     p = sub.add_parser("render", help="render the finished video")
     video_opts(p)

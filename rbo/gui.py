@@ -1,0 +1,343 @@
+"""Local web app for setting the sync point and editing the overlay layout.
+
+    racebox-overlay gui VIDEO.mp4 SESSION.csv
+
+Starts a small server on 127.0.0.1 and opens the editor in your browser. The
+browser plays the actual video file; the overlay panels are drawn by the same
+code that renders the final video, so what you see is what you get.
+Everything you change is saved to VIDEO.mp4.overlay.json, which `render`
+reads automatically.
+"""
+from __future__ import annotations
+
+import base64
+import io
+import json
+import mimetypes
+import re
+import sys
+import threading
+import webbrowser
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from . import project, sync, telemetry, timing, video
+from .hud import Hud
+from .themes import THEMES
+from .timing import fmt_time
+
+HERE = Path(__file__).parent
+
+
+class Studio:
+    def __init__(self, video_path: str, session_path: str | None):
+        self.video_path = str(Path(video_path).resolve())
+        self.vinfo = video.probe(self.video_path)
+        self.proj = project.load(self.video_path)
+        session_path = session_path or self.proj.get("session")
+        if not session_path:
+            sys.exit("give the RaceBox session file too:  racebox-overlay gui VIDEO SESSION.csv")
+        self.proj["session"] = str(Path(session_path).resolve())
+        self.tel = telemetry.load(self.proj["session"])
+        self.tm = timing.Timing(self.tel, track=timing.load_track(self.proj.get("track")),
+                                n_sectors=int(self.proj.get("sectors") or 3))
+        self.lock = threading.Lock()
+        self._huds: dict[str, Hud] = {}
+        self.render_state: dict = {"state": "idle"}
+        self._cancel: threading.Event | None = None
+        if self.proj.get("offset") is None:
+            self.proj["offset"] = self._clock_guess()
+            self.offset_source = "camera clock" if self.proj["offset"] else "none yet"
+        else:
+            self.offset_source = "saved"
+
+    # ------------------------------------------------------------ helpers
+
+    @property
+    def t0(self) -> float:
+        return float(self.tel.t[0])
+
+    def _clock_guess(self) -> float:
+        from .cli import _auto_offset
+        created = self.vinfo.get("created")
+        if created is None:
+            return 0.0
+        off, how = _auto_offset(created, self.tel, self.vinfo["duration"])
+        return 0.0 if "doesn't match" in how else round(off - self.t0, 3)
+
+    def save(self) -> str:
+        return str(project.save(self.video_path, self.proj))
+
+    def hud(self, width: int, height: int) -> Hud:
+        key = json.dumps([width, height, self.proj.get("theme"), self.proj.get("units"),
+                          self.proj.get("scale"), self.proj.get("layout")], sort_keys=True)
+        with self.lock:
+            h = self._huds.get(key)
+            if h is None:
+                if len(self._huds) > 6:
+                    self._huds.clear()
+                h = Hud(self.tel, self.tm, width, height, units=self.proj.get("units") or "mph",
+                        scale=float(self.proj.get("scale") or 1.0), theme=self.proj.get("theme"),
+                        layout=self.proj.get("layout") or {})
+                self._huds[key] = h
+            return h
+
+    # ------------------------------------------------------------ API
+
+    def state(self) -> dict:
+        v = self.vinfo
+        laps = [{"n": l.number, "start": l.t_start - self.t0, "time": l.time,
+                 "time_str": fmt_time(l.time),
+                 "sectors": [fmt_time(s) for s in l.sectors] if l.sectors else None}
+                for l in self.tm.laps]
+        best = min(self.tm.laps, key=lambda l: l.time).number if self.tm.laps else None
+        return {
+            "video": {"name": Path(self.video_path).name, "width": v["width"], "height": v["height"],
+                      "fps": float(v["fps"]), "duration": v["duration"],
+                      "has_gyro": sync.has_trailer(self.video_path)},
+            "data": {"name": Path(self.proj["session"]).name, "duration": self.tel.duration,
+                     "laps": laps, "best": best, "bike": self.tel.is_bike,
+                     "panels": self._panel_keys()},
+            "project": self.proj,
+            "project_file": str(project.path_for(self.video_path)),
+            "offset_source": self.offset_source,
+            "themes": [{"id": k, "label": t.get("label", k.title()),
+                        "swatch": [list(t.get(c, THEMES["carbon"][c])) for c in ("bg", "text", "accent")]}
+                       for k, t in THEMES.items()],
+        }
+
+    def _panel_keys(self) -> list[dict]:
+        names = []
+        if self.tm.laps:
+            names.append(("laps", "Lap timer & sectors"))
+        names.append(("map", "Track map"))
+        names.append(("speed", "Speed"))
+        if self.tel.is_bike:
+            names.append(("gforce", "Lean angle"))
+        elif self.tel.g_lat is not None:
+            names.append(("gforce", "G-force"))
+        return [{"key": k, "label": lbl} for k, lbl in names]
+
+    def hud_frame(self, vt: float, pw: int) -> dict:
+        W, H = self.vinfo["width"], self.vinfo["height"]
+        pw = int(max(320, min(pw, W, 1920)))
+        ph = int(round(pw * H / W))
+        h = self.hud(pw, ph)
+        t = vt + self.t0 + float(self.proj["offset"])
+        img = h.render_atlas(t)
+        buf = io.BytesIO()
+        img.save(buf, "PNG", compress_level=1)
+        st = self.tm.state(t)
+        speed = float(self.tel.at("speed_kmh", t))
+        if (self.proj.get("units") or "mph") == "mph":
+            speed_s = f"{speed * 0.621371:.0f} mph"
+        else:
+            speed_s = f"{speed:.0f} km/h"
+        if st.phase == "lap":
+            lap_s = f"Lap {st.lap_number}  {fmt_time(st.elapsed)}"
+        else:
+            lap_s = {"pre": "Out lap", "post": "In lap", "none": "No laps"}[st.phase]
+        inside = self.t0 <= t <= float(self.tel.t[-1])
+        return {"pw": pw, "ph": ph, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
+                "panels": [p for p in h.describe() if p["name"] != "none"],
+                "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+                "readout": {"lap": lap_s, "speed": speed_s, "data_time": t - self.t0,
+                            "in_data": inside}}
+
+    def update_project(self, changes: dict) -> dict:
+        allowed = {"offset", "theme", "units", "scale", "layout"}
+        for k, v in changes.items():
+            if k in allowed:
+                self.proj[k] = v
+        if "offset" in changes:
+            self.offset_source = "set by you"
+        return {"saved": self.save(), "offset": self.proj["offset"]}
+
+    def sync_lap(self, n: int, vt: float) -> dict:
+        lap = next((l for l in self.tm.laps if l.number == n), None)
+        if lap is None:
+            raise ValueError(f"no lap {n}")
+        return self.update_project({"offset": round(lap.t_start - self.t0 - vt, 3)})
+
+    def auto_sync(self) -> dict:
+        prior = None
+        guess = self._clock_guess()
+        if self.vinfo.get("created") is not None and guess:
+            prior = self.t0 + guess
+        try:
+            r = sync.auto_sync(self.video_path, self.tel, prior=prior)
+        except sync.SyncError as e:
+            return {"ok": False, "error": str(e)}
+        res = self.update_project({"offset": round(r.offset - self.t0, 3)})
+        self.offset_source = f"auto ({r.method})"
+        return {"ok": True, "offset": res["offset"], "score": r.score, "confident": r.confident,
+                "method": r.method,
+                "alternatives": [{"offset": round(o - self.t0, 3), "score": s} for o, s in r.alternatives]}
+
+    # ------------------------------------------------------------ rendering
+
+    def start_render(self, start: float | None, end: float | None) -> dict:
+        if self.render_state.get("state") == "running":
+            return self.render_state
+        out = str(Path(self.video_path).with_name(Path(self.video_path).stem + "_overlay.mp4"))
+        self._cancel = threading.Event()
+        self.render_state = {"state": "running", "done": 0, "total": 0, "fps": 0, "out": out}
+
+        def work():
+            try:
+                h = Hud(self.tel, self.tm, self.vinfo["width"], self.vinfo["height"],
+                        units=self.proj.get("units") or "mph", scale=float(self.proj.get("scale") or 1),
+                        theme=self.proj.get("theme"), layout=self.proj.get("layout") or {})
+
+                def prog(i, n, rate):
+                    self.render_state.update(done=i, total=n, fps=rate)
+
+                video.render(self.video_path, h, self.t0 + float(self.proj["offset"]), out,
+                             start or 0.0, end, progress=prog, cancel=self._cancel)
+                self.render_state["state"] = "done"
+            except Exception as e:  # noqa: BLE001 - surfaced to the UI
+                self.render_state.update(state="error", error=str(e))
+
+        threading.Thread(target=work, daemon=True).start()
+        return self.render_state
+
+    def cancel_render(self) -> dict:
+        if self._cancel:
+            self._cancel.set()
+        return self.render_state
+
+
+class Handler(BaseHTTPRequestHandler):
+    studio: Studio
+
+    def log_message(self, *a):
+        pass
+
+    def _json(self, obj, status=HTTPStatus.OK):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(n) or b"{}")
+
+    def do_GET(self):
+        u = urlparse(self.path)
+        q = parse_qs(u.query)
+        try:
+            if u.path == "/":
+                body = (HERE / "gui.html").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif u.path == "/video":
+                self._send_video()
+            elif u.path == "/api/state":
+                self._json(self.studio.state())
+            elif u.path == "/api/hud":
+                self._json(self.studio.hud_frame(float(q["vt"][0]), int(float(q.get("pw", ["960"])[0]))))
+            elif u.path == "/api/render":
+                self._json(self.studio.render_state)
+            else:
+                self.send_error(404)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:  # noqa: BLE001
+            self._json({"error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        try:
+            b = self._body()
+            s = self.studio
+            if u.path == "/api/project":
+                self._json(s.update_project(b))
+            elif u.path == "/api/sync-lap":
+                self._json(s.sync_lap(int(b["lap"]), float(b["vt"])))
+            elif u.path == "/api/autosync":
+                self._json(s.auto_sync())
+            elif u.path == "/api/render":
+                self._json(s.start_render(b.get("start"), b.get("end")))
+            elif u.path == "/api/render/cancel":
+                self._json(s.cancel_render())
+            else:
+                self.send_error(404)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:  # noqa: BLE001
+            self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+
+    def _send_video(self):
+        path = self.studio.video_path
+        size = Path(path).stat().st_size
+        ctype = mimetypes.guess_type(path)[0] or "video/mp4"
+        if not ctype.startswith("video/"):
+            ctype = "video/mp4"
+        rng = self.headers.get("Range")
+        start, end = 0, size - 1
+        if rng:
+            m = re.match(r"bytes=(\d*)-(\d*)", rng)
+            if m:
+                if m.group(1):
+                    start = int(m.group(1))
+                    if m.group(2):
+                        end = min(int(m.group(2)), size - 1)
+                elif m.group(2):
+                    start = max(size - int(m.group(2)), 0)
+            if start > end or start >= size:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            self.send_response(HTTPStatus.PARTIAL_CONTENT)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        else:
+            self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            while left > 0:
+                chunk = f.read(min(1 << 20, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
+
+
+def serve(video_path: str, session_path: str | None, port: int = 8765,
+          open_browser: bool = True) -> None:
+    studio = Studio(video_path, session_path)
+    Handler.studio = studio
+    httpd = None
+    for p in range(port, port + 20):
+        try:
+            httpd = ThreadingHTTPServer(("127.0.0.1", p), Handler)
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        sys.exit(f"no free port between {port} and {port + 19}")
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    print(f"editor running at {url}  (Ctrl-C to stop)")
+    print(f"settings save to {project.path_for(studio.video_path)}")
+    if open_browser:
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        httpd.server_close()

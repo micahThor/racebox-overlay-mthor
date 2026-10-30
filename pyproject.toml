@@ -15,3 +15,6 @@ racebox-overlay = "rbo.cli:main"
 
 [tool.setuptools]
 packages = ["rbo"]
+
+[tool.setuptools.package-data]
+rbo = ["gui.html"]

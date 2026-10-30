@@ -17,20 +17,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .telemetry import Telemetry
+from .themes import load_theme
 from .timing import Timing, HudState, fmt_time
 
-COLORS = {
-    "bg": (10, 12, 16, 200),
-    "edge": (255, 255, 255, 40),
-    "white": (245, 247, 250, 255),
-    "dim": (150, 156, 168, 255),
-    "faint": (255, 255, 255, 60),
-    "accent": (255, 92, 40, 255),
-    "purple": (178, 92, 255, 255),
-    "green": (40, 205, 110, 255),
-    "yellow": (245, 196, 30, 255),
-    "red": (235, 64, 52, 255),
-}
+PANEL_NAMES = ("laps", "map", "speed", "gforce")   # "gforce" shows lean for bikes
 
 FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/DIN Alternate Bold.ttf",   # macOS
@@ -43,16 +33,6 @@ FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
 ]
-
-
-def tint(color, opacity: float):
-    """A colour as it looks laid over the card. Drawing a translucent colour
-    straight onto the card would replace the card's alpha and punch a hole in
-    it, so blend it into the card colour instead and keep the card's alpha."""
-    bg = COLORS["bg"]
-    c = COLORS[color] if isinstance(color, str) else color
-    o = opacity * (c[3] / 255 if len(c) > 3 else 1)
-    return tuple(int(round(o * c[i] + (1 - o) * bg[i])) for i in range(3)) + (max(bg[3], int(o * 255)),)
 
 
 def find_font(override: str | None = None) -> str | None:
@@ -71,18 +51,32 @@ class Panel:
     h: int
     ay: int = 0     # vertical offset inside the atlas
     draw: Callable | None = None
+    k: float = 1.0  # this panel's size factor
+    key: str = ""   # layout key ("gforce" for the lean panel too)
 
 
 class Hud:
     def __init__(self, tel: Telemetry, timing: Timing, width: int, height: int,
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
-                 hide: set[str] | None = None):
+                 hide: set[str] | None = None, theme: str | dict | None = None,
+                 layout: dict | None = None):
+        """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}}
+        with x/y the panel's top-left corner as a fraction of the frame. Panels
+        without x/y sit in their default corner."""
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
-        self.k = min(width, height) / 1080 * scale
+        self.base_k = min(width, height) / 1080 * scale
+        self.k = self.base_k
         self.units = units
-        self.hide = hide or set()
-        self.font_path = find_font(font)
+        self.hide = set(hide or set())
+        self.layout = layout or {}
+        for name, cfg in self.layout.items():
+            if cfg.get("visible") is False:
+                self.hide.add(name)
+        self.theme = load_theme(theme)
+        self.C = dict(self.theme)
+        self.C["white"] = self.theme["text"]
+        self.font_path = find_font(font or self.theme.get("font"))
         self._fonts: dict[int, ImageFont.FreeTypeFont] = {}
 
         self.speed_factor = 0.621371 if units == "mph" else 1.0
@@ -95,6 +89,8 @@ class Hud:
         self.lean_max = (float(np.percentile(np.abs(tel.lean_deg), 99.5)) if self.has_lean else 0)
 
         self.panels = self._layout()
+        if not self.panels:   # everything hidden: keep a 2x2 transparent stub
+            self.panels = [Panel("none", 0, 0, 2, 2, draw=lambda *a: None, k=self.base_k, key="none")]
         self.atlas_w = max(p.w for p in self.panels)
         self.atlas_h = sum(p.h for p in self.panels)
         y = 0
@@ -108,6 +104,26 @@ class Hud:
     def S(self, v: float) -> int:
         return int(round(v * self.k))
 
+    def _use(self, p: Panel) -> None:
+        self.k = p.k
+
+    def col(self, c):
+        return self.C.get(c, c) if isinstance(c, str) else c
+
+    def tint(self, color, opacity: float):
+        """`color` at `opacity` laid over the card, as one solid colour.
+        Drawing a translucent colour straight onto the card would replace the
+        card's alpha and punch a hole in it, so composite it here instead."""
+        bg = self.C["bg"]
+        c = self.col(color)
+        o = opacity * (c[3] / 255 if len(c) > 3 else 1)
+        ab = bg[3] / 255
+        a = o + ab * (1 - o)
+        if a <= 0:
+            return (0, 0, 0, 0)
+        rgb = tuple(int(round((o * c[i] + ab * (1 - o) * bg[i]) / a)) for i in range(3))
+        return rgb + (int(round(a * 255)),)
+
     def font(self, size: float) -> ImageFont.FreeTypeFont:
         px = max(8, self.S(size))
         if px not in self._fonts:
@@ -120,48 +136,70 @@ class Hud:
         """Draw text at baseline y. Digits get a fixed width so running times
         don't jitter left and right as they count."""
         f = self.font(size)
-        fill = COLORS.get(fill, fill) if isinstance(fill, str) else fill
+        fill = self.col(fill)
+        sw = int(round(self.theme.get("stroke", 0) * self.k * size / 30)) if self.theme.get("stroke") else 0
+        extra = {"stroke_width": sw, "stroke_fill": self.C["stroke_color"]} if sw else {}
         dw = max(f.getlength(c) for c in "0123456789")
         widths = [dw if c.isdigit() else f.getlength(c) for c in s]
         total = sum(widths)
         cx = x - total if anchor == "r" else x - total / 2 if anchor == "m" else x
         for c, w in zip(s, widths):
             off = (w - f.getlength(c)) / 2 if c.isdigit() else 0
-            d.text((cx + off, y), c, font=f, fill=fill, anchor="ls")
+            d.text((cx + off, y), c, font=f, fill=fill, anchor="ls", **extra)
             cx += w
         return total
 
     def card(self, d, p: Panel):
         oy = p.ay
-        d.rounded_rectangle([0, oy, p.w - 1, oy + p.h - 1], radius=self.S(18),
-                            fill=COLORS["bg"], outline=COLORS["edge"], width=max(1, self.S(1.5)))
+        if self.C["bg"][3] == 0 and self.C["edge"][3] == 0:
+            return
+        d.rounded_rectangle([0, oy, p.w - 1, oy + p.h - 1], radius=self.S(self.theme.get("radius", 18)),
+                            fill=self.C["bg"],
+                            outline=self.C["edge"] if self.C["edge"][3] else None,
+                            width=max(1, self.S(1.5)))
 
     # ------------------------------------------------------------ layout
 
     def _layout(self) -> list[Panel]:
-        S, W, H = self.S, self.W, self.H
-        m = S(36)
+        W, H = self.W, self.H
+        specs = []     # (key, name, ref_w, ref_h, corner, draw)
+        if self.timing.laps:
+            specs.append(("laps", "laps", 560, 340 if self.timing.sector_gates else 250, "tl",
+                          self._draw_laps))
+        x, y = self.timing.x, self.timing.y
+        aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
+        mw, mh = 420, int(min(max(420 * aspect, 200), 420))
+        if aspect > 1.2:
+            mw, mh = int(min(max(420 / aspect, 200), 420)), 420
+        specs.append(("map", "map", mw, mh, "tr", self._draw_map))
+        specs.append(("speed", "speed", 400, 230, "bl", self._draw_speed))
+        if self.has_g:
+            specs.append(("gforce", "gforce", 320, 330, "br", self._draw_g))
+        elif self.has_lean:
+            specs.append(("gforce", "lean", 400, 280, "br", self._draw_lean))
+
         panels = []
-        if self.timing.laps and "laps" not in self.hide:
-            h = 340 if self.timing.sector_gates else 250
-            panels.append(Panel("laps", m, m, S(560), S(h), draw=self._draw_laps))
-        if "map" not in self.hide:
-            x, y = self.timing.x, self.timing.y
-            aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
-            w = 420
-            h = int(min(max(w * aspect, 200), 420))
-            if aspect > 1.2:
-                h, w = 420, int(min(max(420 / aspect, 200), 420))
-            panels.append(Panel("map", W - m - S(w), m, S(w), S(h), draw=self._draw_map))
-        if "speed" not in self.hide:
-            panels.append(Panel("speed", m, H - m - S(230), S(400), S(230), draw=self._draw_speed))
-        if self.has_g and "gforce" not in self.hide:
-            panels.append(Panel("gforce", W - m - S(320), H - m - S(330), S(320), S(330),
-                                draw=self._draw_g))
-        elif self.has_lean and "gforce" not in self.hide:
-            panels.append(Panel("lean", W - m - S(400), H - m - S(280), S(400), S(280),
-                                draw=self._draw_lean))
+        for key, name, rw, rh, corner, fn in specs:
+            if key in self.hide:
+                continue
+            cfg = self.layout.get(key, {})
+            k = self.base_k * float(cfg.get("scale", 1.0))
+            w, h = int(round(rw * k)), int(round(rh * k))
+            m = int(round(36 * self.base_k))
+            if "x" in cfg and "y" in cfg:
+                px, py = float(cfg["x"]) * W, float(cfg["y"]) * H
+            else:
+                px = m if corner[1] == "l" else W - m - w
+                py = m if corner[0] == "t" else H - m - h
+            px = int(round(min(max(px, 0), max(W - w, 0))))
+            py = int(round(min(max(py, 0), max(H - h, 0))))
+            panels.append(Panel(name, px, py, w, h, draw=fn, k=k, key=key))
         return panels
+
+    def describe(self) -> list[dict]:
+        """Panel rectangles, for the GUI."""
+        return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "ay": p.ay}
+                for p in self.panels]
 
     # ------------------------------------------------------------ static layer
 
@@ -169,6 +207,9 @@ class Hud:
         img = Image.new("RGBA", (self.atlas_w, self.atlas_h), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         for p in self.panels:
+            if p.name == "none":
+                continue
+            self._use(p)
             self.card(d, p)
             getattr(self, f"_static_{p.name}", lambda d, p: None)(d, p)
         return img
@@ -185,19 +226,19 @@ class Hud:
 
         step = max(1, len(x) // 3000)
         pts = list(zip(*self._map_xform(x[::step], y[::step])))
-        d.line(pts, fill=tint("white", 0.22), width=max(1, self.S(3)), joint="curve")
+        d.line(pts, fill=self.tint("white", 0.22), width=max(1, self.S(3)), joint="curve")
         laps = self.timing.laps
         if laps:
             best = min(laps, key=lambda l: l.time)
             m = (self.tel.t >= best.t_start) & (self.tel.t <= best.t_end)
             bx, by = self._map_xform(x[m], y[m])
-            d.line(list(zip(bx, by)), fill=(230, 233, 240, 235), width=max(2, self.S(5)), joint="curve")
+            d.line(list(zip(bx, by)), fill=self.C["line"], width=max(2, self.S(5)), joint="curve")
         gates = ([self.timing.start_gate] if self.timing.start_gate else []) + self.timing.sector_gates
         for i, g in enumerate(gates):
             gx, gy = self._map_xform(g.x, g.y)
             nx, ny = -g.dy, g.dx            # perpendicular, map y is flipped
             L = self.S(16 if i == 0 else 10)
-            col = COLORS["white"] if i == 0 else COLORS["dim"]
+            col = self.C["white"] if i == 0 else self.C["dim"]
             d.line([(gx - nx * L, gy + ny * L), (gx + nx * L, gy - ny * L)], fill=col,
                    width=max(2, self.S(4 if i == 0 else 3)))
 
@@ -210,10 +251,10 @@ class Hud:
         n = int(self.gmax / 0.5)
         for i in range(1, n + 1):
             r = R * i / n
-            d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=tint("white", 0.22),
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=self.tint("white", 0.22),
                       width=max(1, self.S(2 if i == n else 1.2)))
-        d.line([(cx - R, cy), (cx + R, cy)], fill=tint("white", 0.22), width=max(1, self.S(1)))
-        d.line([(cx, cy - R), (cx, cy + R)], fill=tint("white", 0.22), width=max(1, self.S(1)))
+        d.line([(cx - R, cy), (cx + R, cy)], fill=self.tint("white", 0.22), width=max(1, self.S(1)))
+        d.line([(cx, cy - R), (cx, cy + R)], fill=self.tint("white", 0.22), width=max(1, self.S(1)))
         self.text(d, self.S(22), p.ay + self.S(40), "G-FORCE", 22, "dim")
         self.text(d, cx + R + self.S(4), cy - R + self.S(14), f"{self.gmax:g}G", 16, "dim", "l")
 
@@ -222,13 +263,13 @@ class Hud:
         cx, cy, R = p.w / 2, p.ay + self.S(250), self.S(150)
         self._lean_geom = (cx, cy, R)
         box = [cx - R, cy - R, cx + R, cy + R]
-        d.arc(box, 180 + 30, 360 - 30, fill=tint("white", 0.18), width=self.S(14))
+        d.arc(box, 180 + 30, 360 - 30, fill=self.tint("white", 0.18), width=self.S(14))
         for a in (-60, -45, -30, -15, 0, 15, 30, 45, 60):
             ang = math.radians(-90 + a)
             r1, r2 = R + self.S(10), R + self.S(18 if a % 30 == 0 else 14)
             d.line([(cx + r1 * math.cos(ang), cy + r1 * math.sin(ang)),
                     (cx + r2 * math.cos(ang), cy + r2 * math.sin(ang))],
-                   fill=COLORS["dim"], width=max(1, self.S(2)))
+                   fill=self.C["dim"], width=max(1, self.S(2)))
 
     # ------------------------------------------------------------ dynamic layer
 
@@ -237,6 +278,7 @@ class Hud:
         d = ImageDraw.Draw(img)
         st = self.timing.state(t)
         for p in self.panels:
+            self._use(p)
             p.draw(d, p, t, st)
         return img
 
@@ -264,11 +306,11 @@ class Hud:
         self.text(d, pad, oy + S(50), head, 30, "dim")
 
         if st.delta is not None:
-            col = COLORS["green"] if st.delta < 0 else COLORS["red"]
+            col = self.C["green"] if st.delta < 0 else self.C["red"]
             label = fmt_time(st.delta, plus=True)
             w = self.font(30).getlength(label) + S(28)
             d.rounded_rectangle([right - w, oy + S(18), right, oy + S(60)], radius=S(10), fill=col)
-            self.text(d, right - w / 2, oy + S(50), label, 30, "white", "m")
+            self.text(d, right - w / 2, oy + S(50), label, 30, (255, 255, 255, 255), "m")
 
         # main clock
         if held:
@@ -280,10 +322,11 @@ class Hud:
 
         # last / best
         y = oy + S(205)
-        self.text(d, pad, y, "LAST", 20, "dim")
-        self.text(d, pad + S(62), y, fmt_time(st.last_lap), 30, "white")
-        self.text(d, pad + S(270), y, "BEST", 20, "dim")
-        self.text(d, pad + S(334), y, fmt_time(st.best_lap), 30, "purple" if st.best_lap else "dim")
+        w = self.text(d, pad, y, "LAST", 20, "dim")
+        self.text(d, pad + w + S(10), y, fmt_time(st.last_lap), 30, "white")
+        w = self.text(d, pad + S(270), y, "BEST", 20, "dim")
+        self.text(d, pad + S(270) + w + S(10), y, fmt_time(st.best_lap), 30,
+                  "purple" if st.best_lap else "dim")
 
         # sectors
         cells = st.sectors or [None] * (len(self.timing.sector_gates) + 1 if self.timing.sector_gates else 0)
@@ -294,8 +337,8 @@ class Hud:
             top, bot = oy + S(234), oy + p.h - S(22)
             for i, c in enumerate(cells):
                 x0 = pad + i * (cw + gap)
-                d.rounded_rectangle([x0, top, x0 + cw, bot], radius=S(8), fill=tint("white", 0.08))
-                color = COLORS.get(c.color if c else "dim")
+                d.rounded_rectangle([x0, top, x0 + cw, bot], radius=S(8), fill=self.tint("white", 0.08))
+                color = self.col(c.color if c else "dim")
                 if c and c.status == "done":
                     d.rounded_rectangle([x0, top, x0 + cw, top + S(6)], radius=S(3), fill=color)
                 self.text(d, x0 + S(12), top + S(34), f"S{i + 1}", 18, "dim")
@@ -310,8 +353,8 @@ class Hud:
         px, py = self._map_xform(x, y)
         r = self.S(10)
         d.ellipse([px - r - self.S(3), py - r - self.S(3), px + r + self.S(3), py + r + self.S(3)],
-                  fill=(255, 255, 255, 255))
-        d.ellipse([px - r, py - r, px + r, py + r], fill=COLORS["accent"])
+                  fill=self.C["ring"])
+        d.ellipse([px - r, py - r, px + r, py + r], fill=self.C["accent"])
 
     def _draw_speed(self, d, p, t, st):
         S, oy, pad = self.S, p.ay, self.S(26)
@@ -320,11 +363,11 @@ class Hud:
         self.text(d, S(284), oy + S(140), "MPH" if self.units == "mph" else "KM/H", 30, "dim")
         # speed bar
         bx0, bx1, by = pad, p.w - pad, oy + S(162)
-        d.rounded_rectangle([bx0, by, bx1, by + S(10)], radius=S(5), fill=tint("white", 0.14))
+        d.rounded_rectangle([bx0, by, bx1, by + S(10)], radius=S(5), fill=self.tint("white", 0.14))
         frac = min(max(v / max(self.vmax, 1), 0), 1)
         if frac > 0.01:
             d.rounded_rectangle([bx0, by, bx0 + (bx1 - bx0) * frac, by + S(10)], radius=S(5),
-                                fill=COLORS["accent"])
+                                fill=self.C["accent"])
         # extra channels
         y = oy + S(208)
         items = []
@@ -353,13 +396,13 @@ class Hud:
         for i, (a, b) in enumerate(zip(gl, gn)):
             r = self.S(3 + 3 * i / len(gl))
             px, py = cx + a / self.gmax * R, cy - b / self.gmax * R
-            d.ellipse([px - r, py - r, px + r, py + r], fill=tint("accent", 0.15 + 0.6 * i / len(gl)))
+            d.ellipse([px - r, py - r, px + r, py + r], fill=self.tint("accent", 0.15 + 0.6 * i / len(gl)))
         a, b = gl[-1], gn[-1]
         px, py = cx + max(-1.1, min(1.1, a / self.gmax)) * R, cy - max(-1.1, min(1.1, b / self.gmax)) * R
         r = self.S(11)
         d.ellipse([px - r - self.S(3), py - r - self.S(3), px + r + self.S(3), py + r + self.S(3)],
-                  fill=(255, 255, 255, 255))
-        d.ellipse([px - r, py - r, px + r, py + r], fill=COLORS["accent"])
+                  fill=self.C["ring"])
+        d.ellipse([px - r, py - r, px + r, py + r], fill=self.C["accent"])
         self.text(d, p.w - self.S(22), p.ay + self.S(42), f"{math.hypot(a, b):.2f} G", 30, "white", "r")
         y = p.ay + p.h - self.S(18)
         self.text(d, self.S(22), y, f"LAT {abs(a):.2f}", 20, "dim")
@@ -372,13 +415,13 @@ class Hud:
         box = [cx - R, cy - R, cx + R, cy + R]
         start, end = (270, 270 + a) if a >= 0 else (270 + a, 270)
         if abs(a) > 0.5:
-            d.arc(box, start, end, fill=COLORS["accent"], width=self.S(14))
+            d.arc(box, start, end, fill=self.C["accent"], width=self.S(14))
         # marker across the arc at the current angle
         ang = math.radians(-90 + a)
         r1, r2 = R - self.S(22), R + self.S(8)
         d.line([(cx + r1 * math.cos(ang), cy + r1 * math.sin(ang)),
                 (cx + r2 * math.cos(ang), cy + r2 * math.sin(ang))],
-               fill=COLORS["white"], width=self.S(6))
+               fill=self.C["white"], width=self.S(6))
         side = "R" if lean > 0.5 else "L" if lean < -0.5 else ""
         self.text(d, cx, cy - self.S(40), f"{abs(lean):.0f}°{side}", 72, "white", "m")
         if self.tel.g_long is not None:

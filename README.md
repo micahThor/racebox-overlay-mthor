@@ -115,11 +115,57 @@ racebox-overlay render video.mp4 session.csv --offset 12.54 -o onboard.mp4
 
 Add `--start 3:30 --end 12:00` to render only part of the clip.
 
+## The editor
+
+```bash
+racebox-overlay gui VID_20261024_103015.mp4 session.csv
+```
+
+This opens the editor in your browser: your video with the overlay on top,
+and a lap timeline under it showing where each lap falls.
+
+- **Sync tab:** press *Auto-sync*, or pause on the frame where you cross
+  the start/finish line, choose the lap, and press *Set sync here*. Nudge by
+  a frame or a tenth of a second until the timer resets exactly on the line.
+  The lap segments on the timeline move as you adjust, so you can see
+  straight away whether laps start where the video says they do.
+- **Look & layout tab:** pick a theme, mph or km/h, and overall size; show
+  or hide panels and resize them; drag panels on the video to move them.
+- **Render video** at the bottom renders the whole clip, or a section if
+  you enter From/To times, to `VID_..._overlay.mp4` next to the original.
+
+Everything saves as you go to `VID_....mp4.overlay.json` next to the
+video. `render` and `preview` read that file, so after using the editor
+`racebox-overlay render VID_20261024_103015.mp4` needs no other options.
+Command-line options still override what's saved; `--no-project` ignores
+the file.
+
+Keys: Space plays/pauses, Left/Right step one frame, Shift+Left/Right one
+second. The GO 3S can record H.265; Safari and Chrome on a Mac play it, but
+if the video won't load in your browser, switch the camera to H.264.
+
+## Themes
+
+Four built in: **carbon** (dark cards, default), **daylight** (light cards
+for bright, washed-out footage), **neon** (outlined, cyan), and **minimal**
+(no cards, outlined text). Pick one in the editor or with `--theme neon`.
+
+Make your own as a JSON file. Start from a built-in and change only what you
+want; the full list of keys is in `rbo/themes.py`:
+
+```json
+{ "base": "carbon", "accent": [0, 160, 255], "bg": [0, 20, 40, 190], "radius": 6 }
+```
+
+Then use `--theme mytheme.json`, or put the file's path in the `theme` field
+of the `.overlay.json`.
+
 ## Options worth knowing
 
 | option | |
 |---|---|
 | `--units kmh` | km/h and metres (default mph and feet) |
+| `--theme neon` | carbon, daylight, neon, minimal, or a theme `.json` |
 | `--scale 1.2` | make the HUD bigger or smaller |
 | `--hide map,gforce` | drop panels (`laps`, `map`, `speed`, `gforce`) |
 | `--sectors 4` | auto-split laps into N equal-distance sectors (default 3, 0 = off) |
@@ -157,11 +203,14 @@ session at that track with `--track mytrack.json`. See
 - `rbo/sync.py` — auto-sync: reads the IMU log from the `.insv` trailer (or
   measures image motion), then slides it along the RaceBox yaw rate with a
   normalised cross-correlation to find the best match.
+- `rbo/gui.py` + `gui.html` — the editor: a small local web server that
+  streams the video to your browser and draws overlay frames on request,
+  using the same drawing code as the final render.
+- `rbo/themes.py`, `rbo/project.py` — themes, and the per-video settings file.
 - `rbo/video.py` — ffmpeg crops the panels back out, overlays them, and
   encodes with VideoToolbox, copying the original audio.
 
 ## Ideas for next steps
 
-- A small GUI to scrub the video and set the sync point visually.
 - Lap comparison (ghost of best lap on the map, delta graph).
-- Overlay themes and a layout editor.
+- Join split recordings (long sessions spanning several video files).

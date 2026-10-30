@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RaceBox Overlay Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #1b2027;
+  --surface: #242a33;
+  --raised: #2d3540;
+  --line: #3a434f;
+  --text: #e7eaef;
+  --muted: #929cab;
+  --amber: #f2a900;
+  --amber-ink: #1b2027;
+  --purple: #b25cff;
+  --green: #28cd6e;
+  --red: #eb4034;
+  --ui: "Barlow", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --num: "Barlow Condensed", "Avenir Next Condensed", "DIN Alternate", "Arial Narrow", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.45 var(--ui);
+  display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100vh;
+}
+button, select, input { font: inherit; color: inherit; }
+button {
+  background: var(--raised); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+button:disabled { opacity: .45; cursor: default; }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.num { font-family: var(--num); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+
+header {
+  display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+  padding: 12px 20px; border-bottom: 1px solid var(--line);
+}
+header h1 { font: 600 17px var(--ui); margin: 0; }
+header .files { color: var(--muted); font-size: 14px; }
+header .saved { margin-left: auto; color: var(--muted); font-size: 13px; }
+header .saved.ok::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); margin-right: 7px; vertical-align: 1px; }
+
+main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 0; }
+.left { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow: auto; }
+
+.stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; user-select: none; }
+.stage video { display: block; width: 100%; height: auto; }
+.overlay { position: absolute; inset: 0; }
+.panel { position: absolute; background-repeat: no-repeat; cursor: grab; touch-action: none; }
+.panel:hover { outline: 1px dashed rgba(242,169,0,.8); outline-offset: 2px; }
+.panel.drag { cursor: grabbing; outline: 2px solid var(--amber); }
+.stage .nodata {
+  position: absolute; left: 12px; bottom: 12px; padding: 4px 10px; border-radius: 4px;
+  background: rgba(0,0,0,.6); color: var(--muted); font-size: 13px; display: none;
+}
+
+.transport { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.transport .tc { font-size: 22px; margin-left: 8px; min-width: 190px; }
+.transport .tc small { color: var(--muted); font-size: 16px; }
+.transport .readout { margin-left: auto; color: var(--muted); font-size: 14px; text-align: right; }
+.transport .readout b { color: var(--text); font-weight: 500; }
+
+/* lap timeline: the scrub bar */
+.timeline { position: relative; height: 54px; background: var(--surface); border-radius: 6px;
+  cursor: pointer; touch-action: none; overflow: hidden; }
+.lap { position: absolute; top: 8px; bottom: 8px; border-left: 2px solid var(--muted);
+  background: rgba(255,255,255,.05); padding: 2px 6px; overflow: hidden; white-space: nowrap;
+  font-family: var(--num); font-size: 15px; line-height: 1.15; color: var(--muted); }
+.lap b { color: var(--text); font-weight: 600; display: block; }
+.lap.best { background: rgba(178,92,255,.16); border-left-color: var(--purple); }
+.lap.best b { color: var(--purple); }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); pointer-events: none; }
+.playhead::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent;
+  border-top-color: var(--amber); }
+.hint { color: var(--muted); font-size: 13px; margin: 0; }
+
+aside { border-left: 1px solid var(--line); background: var(--surface); display: flex;
+  flex-direction: column; min-height: 0; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; border: 0; border-radius: 0; background: none; padding: 12px; color: var(--muted);
+  border-bottom: 2px solid transparent; font-weight: 500; }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--amber); }
+.pane { padding: 18px; overflow: auto; flex: 1; display: none; }
+.pane.on { display: block; }
+.pane h2 { font: 600 15px var(--ui); margin: 22px 0 6px; }
+.pane h2:first-child { margin-top: 0; }
+.pane p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+
+.offset { font-size: 44px; line-height: 1; font-weight: 600; }
+.offset small { font-size: 20px; color: var(--muted); font-weight: 500; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.nudge button { flex: 1 0 28%; padding: 6px 4px; font-family: var(--num); font-size: 16px; }
+select { background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; }
+.result { margin-top: 10px; font-size: 14px; }
+.result .warn { color: var(--amber); }
+.result button { margin: 4px 6px 0 0; font-family: var(--num); }
+.laps { width: 100%; border-collapse: collapse; font-family: var(--num); font-size: 16px; }
+.laps td { padding: 4px 4px; border-top: 1px solid var(--line); }
+.laps td:last-child { text-align: right; }
+.laps tr { cursor: pointer; }
+.laps tr:hover td { background: var(--raised); }
+.laps .best { color: var(--purple); }
+
+.themes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.theme { text-align: left; padding: 10px; }
+.theme[aria-pressed="true"] { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+.sw { display: flex; gap: 4px; margin-top: 6px; }
+.sw i { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(255,255,255,.15); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: none; padding: 6px 14px; }
+.seg button[aria-pressed="true"] { background: var(--amber); color: var(--amber-ink); font-weight: 600; }
+.prow { display: grid; grid-template-columns: auto 1fr auto; gap: 8px 10px; align-items: center;
+  padding: 8px 0; border-top: 1px solid var(--line); }
+.prow label { display: flex; gap: 8px; align-items: center; }
+.prow input[type=range] { grid-column: 1 / 3; width: 100%; accent-color: var(--amber); }
+.prow .pct { font-family: var(--num); color: var(--muted); font-size: 15px; }
+input[type=range] { accent-color: var(--amber); }
+input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
+
+.render { border-top: 1px solid var(--line); padding: 16px 18px; }
+.render .row input { width: 92px; background: var(--raised); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; font-family: var(--num); font-size: 16px; }
+.bar { height: 6px; background: var(--raised); border-radius: 3px; overflow: hidden; margin: 10px 0 6px; display: none; }
+.bar i { display: block; height: 100%; width: 0; background: var(--amber); }
+.render .status { font-size: 13px; color: var(--muted); word-break: break-all; }
+
+@media (max-width: 900px) {
+  body { height: auto; display: block; }
+  main { grid-template-columns: 1fr; }
+  .left { overflow: visible; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+  .pane { overflow: visible; flex: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>RaceBox Overlay Editor</h1>
+  <span class="files" id="files">Loading…</span>
+  <span class="saved" id="saved"></span>
+</header>
+<main>
+  <section class="left">
+    <div class="stage" id="stage">
+      <video id="vid" src="/video" preload="auto" playsinline muted></video>
+      <div class="overlay" id="overlay"></div>
+      <div class="nodata" id="nodata">No RaceBox data at this point in the video</div>
+    </div>
+    <div class="transport">
+      <button id="play" aria-label="Play">Play</button>
+      <button data-step="-1" title="Back 1 s (Shift+Left)">−1 s</button>
+      <button data-step="-f" title="Back 1 frame (Left)">−1 frame</button>
+      <button data-step="+f" title="Forward 1 frame (Right)">+1 frame</button>
+      <button data-step="1" title="Forward 1 s (Shift+Right)">+1 s</button>
+      <span class="tc num" id="tc">0:00.000 <small>/ 0:00</small></span>
+      <span class="readout" id="readout"></span>
+    </div>
+    <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Video position">
+      <div class="playhead" id="playhead"></div>
+    </div>
+    <p class="hint">Click a lap to jump to where it starts. Space plays and pauses, the arrow keys step a frame (with Shift, a second).</p>
+  </section>
+
+  <aside>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="sync">Sync</button>
+      <button role="tab" aria-selected="false" data-tab="look">Look &amp; layout</button>
+    </div>
+
+    <div class="pane on" id="pane-sync">
+      <h2>Current sync</h2>
+      <div class="offset num" id="offset">–</div>
+      <p id="offsetSrc"></p>
+
+      <h2>Line up a lap</h2>
+      <p>Pause on the frame where you cross the start/finish line, choose which lap is starting, then set it.</p>
+      <div class="row">
+        <select id="lapSel" aria-label="Lap that starts at this frame"></select>
+        <button class="primary" id="setLap">Set sync here</button>
+      </div>
+
+      <h2>Fine-tune</h2>
+      <p>Plus makes the overlay run ahead of the video, minus makes it run behind.</p>
+      <div class="row nudge">
+        <button data-nudge="-1">−1 s</button><button data-nudge="-0.1">−0.1 s</button><button data-nudge="-f">−1 frame</button>
+        <button data-nudge="+f">+1 frame</button><button data-nudge="0.1">+0.1 s</button><button data-nudge="1">+1 s</button>
+      </div>
+
+      <h2>Auto-sync</h2>
+      <p id="autoDesc"></p>
+      <button id="auto">Auto-sync</button>
+      <div class="result" id="autoRes"></div>
+
+      <h2>Laps</h2>
+      <table class="laps" id="lapTable"></table>
+    </div>
+
+    <div class="pane" id="pane-look">
+      <h2>Theme</h2>
+      <div class="themes" id="themes"></div>
+
+      <h2>Units</h2>
+      <div class="seg" id="units">
+        <button data-u="mph">mph</button><button data-u="kmh">km/h</button>
+      </div>
+
+      <h2>Overall size</h2>
+      <div class="row"><input type="range" id="scale" min="0.6" max="1.6" step="0.05" style="flex:1">
+        <span class="pct" id="scaleV"></span></div>
+
+      <h2>Panels</h2>
+      <p>Drag panels on the video to move them.</p>
+      <div id="panelList"></div>
+      <div class="row" style="margin-top:12px"><button id="resetLayout">Reset layout</button></div>
+    </div>
+
+    <div class="render">
+      <div class="row">
+        <label class="hint" for="rStart">From</label><input id="rStart" placeholder="start" aria-label="Render from">
+        <label class="hint" for="rEnd">to</label><input id="rEnd" placeholder="end" aria-label="Render to">
+        <button class="primary" id="renderBtn" style="margin-left:auto">Render video</button>
+      </div>
+      <div class="bar" id="rbar"><i></i></div>
+      <div class="status" id="rstatus"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const vid = $("#vid"), stage = $("#stage"), overlay = $("#overlay"), tl = $("#timeline");
+let S = null;          // server state
+let P = null;          // project settings (mirrors the sidecar file)
+let fps = 30;
+const fmt = s => {
+  const neg = s < 0; s = Math.abs(s);
+  const m = Math.floor(s / 60), r = s - m * 60;
+  return (neg ? "−" : "") + m + ":" + r.toFixed(3).padStart(6, "0");
+};
+const fmtShort = s => { const m = Math.floor(s / 60); return m + ":" + String(Math.floor(s % 60)).padStart(2, "0"); };
+const parseClock = s => s.trim() === "" ? null : s.split(":").reduce((a, p) => a * 60 + parseFloat(p), 0);
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j;
+}
+
+/* ---------- overlay sprites ---------- */
+let inflight = false, pending = false, lastHud = 0;
+async function refreshHud() {
+  if (!S) return;
+  if (inflight) { pending = true; return; }
+  inflight = true;
+  try {
+    const pw = Math.round(stage.clientWidth * Math.min(devicePixelRatio || 1, 2));
+    const h = await api(`/api/hud?vt=${vid.currentTime.toFixed(3)}&pw=${pw}`);
+    await drawPanels(h);
+    $("#readout").innerHTML = `<b>${h.readout.lap}</b><br>${h.readout.speed}`;
+    $("#nodata").style.display = h.readout.in_data ? "none" : "block";
+  } catch (e) { console.error(e); }
+  inflight = false; lastHud = performance.now();
+  if (pending) { pending = false; refreshHud(); }
+}
+function drawPanels(h) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const keep = new Set();
+      for (const p of h.panels) {
+        keep.add(p.key);
+        let el = overlay.querySelector(`[data-key="${p.key}"]`);
+        if (!el) { el = document.createElement("div"); el.className = "panel"; el.dataset.key = p.key;
+                   el.title = "Drag to move"; overlay.appendChild(el); attachDrag(el); }
+        if (el.classList.contains("drag")) continue;
+        el.style.left = (p.x / h.pw * 100) + "%";
+        el.style.top = (p.y / h.ph * 100) + "%";
+        el.style.width = (p.w / h.pw * 100) + "%";
+        el.style.height = (p.h / h.ph * 100) + "%";
+        el.style.backgroundImage = `url(${img.src})`;
+        el.style.backgroundSize = `${h.atlas_w / p.w * 100}% ${h.atlas_h / p.h * 100}%`;
+        el.style.backgroundPosition = `0% ${h.atlas_h > p.h ? p.ay / (h.atlas_h - p.h) * 100 : 0}%`;
+      }
+      overlay.querySelectorAll(".panel").forEach(el => { if (!keep.has(el.dataset.key)) el.remove(); });
+      res();
+    };
+    img.src = h.atlas;
+  });
+}
+function attachDrag(el) {
+  let sx, sy, ox, oy;
+  el.addEventListener("pointerdown", e => {
+    e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag");
+    sx = e.clientX; sy = e.clientY; ox = el.offsetLeft; oy = el.offsetTop;
+  });
+  el.addEventListener("pointermove", e => {
+    if (!el.classList.contains("drag")) return;
+    const W = stage.clientWidth, H = stage.clientHeight;
+    const x = Math.min(Math.max(ox + e.clientX - sx, 0), W - el.offsetWidth);
+    const y = Math.min(Math.max(oy + e.clientY - sy, 0), H - el.offsetHeight);
+    el.style.left = (x / W * 100) + "%"; el.style.top = (y / H * 100) + "%";
+  });
+  el.addEventListener("pointerup", () => {
+    if (!el.classList.contains("drag")) return;
+    el.classList.remove("drag");
+    const k = el.dataset.key;
+    const cfg = Object.assign({}, P.layout[k] || {});
+    cfg.x = +(el.offsetLeft / stage.clientWidth).toFixed(4);
+    cfg.y = +(el.offsetTop / stage.clientHeight).toFixed(4);
+    P.layout[k] = cfg;
+    save({ layout: P.layout });
+  });
+}
+
+/* ---------- saving ---------- */
+async function save(changes) {
+  Object.assign(P, changes);
+  $("#saved").textContent = "Saving…"; $("#saved").classList.remove("ok");
+  try {
+    const r = await api("/api/project", changes);
+    P.offset = r.offset;
+    $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
+    $("#saved").classList.add("ok");
+  } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
+  if ("offset" in changes) { S.offset_source = "set by you"; }
+  renderSync(); renderTimeline(); refreshHud();
+}
+
+/* ---------- transport & timeline ---------- */
+function seek(t) { vid.currentTime = Math.min(Math.max(t, 0), vid.duration || S.video.duration); }
+function renderTimeline() {
+  if (!S) return;
+  const D = S.video.duration;
+  tl.querySelectorAll(".lap").forEach(e => e.remove());
+  for (const l of S.data.laps) {
+    const a = l.start - P.offset, b = a + l.time;
+    if (b < 0 || a > D) continue;
+    const el = document.createElement("div");
+    el.className = "lap" + (l.n === S.data.best ? " best" : "");
+    el.style.left = (Math.max(a, 0) / D * 100) + "%";
+    el.style.width = ((Math.min(b, D) - Math.max(a, 0)) / D * 100) + "%";
+    el.innerHTML = `<b>Lap ${l.n}</b>${l.time_str}`;
+    el.title = `Lap ${l.n}: ${l.time_str}. Click to jump to its start.`;
+    el.dataset.start = Math.max(a, 0);
+    tl.insertBefore(el, $("#playhead"));
+  }
+  updatePlayhead();
+}
+function updatePlayhead() {
+  const D = S ? S.video.duration : 1;
+  $("#playhead").style.left = (vid.currentTime / D * 100) + "%";
+  $("#tc").innerHTML = `${fmt(vid.currentTime)} <small>/ ${fmtShort(D)}</small>`;
+}
+let scrubbing = false;
+function scrubTo(e) { const r = tl.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * S.video.duration); }
+tl.addEventListener("pointerdown", e => {
+  const lap = e.target.closest(".lap");
+  if (lap) { seek(+lap.dataset.start); return; }      // click a lap: jump to its start
+  scrubbing = true; tl.setPointerCapture(e.pointerId); scrubTo(e);
+});
+tl.addEventListener("pointermove", e => { if (scrubbing) scrubTo(e); });
+tl.addEventListener("pointerup", () => scrubbing = false);
+tl.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") return;   // handled globally
+  if (e.key === "Home") seek(0); if (e.key === "End") seek(S.video.duration);
+});
+
+function step(kind) {
+  vid.pause();
+  const d = kind === "-f" ? -1 / fps : kind === "+f" ? 1 / fps : parseFloat(kind);
+  seek(vid.currentTime + d);
+}
+document.querySelectorAll("[data-step]").forEach(b => b.addEventListener("click", () => step(b.dataset.step)));
+$("#play").addEventListener("click", () => vid.paused ? vid.play() : vid.pause());
+vid.addEventListener("play", () => { $("#play").textContent = "Pause"; loop(); });
+vid.addEventListener("pause", () => { $("#play").textContent = "Play"; refreshHud(); });
+vid.addEventListener("seeked", () => { updatePlayhead(); refreshHud(); });
+vid.addEventListener("timeupdate", updatePlayhead);
+vid.addEventListener("loadedmetadata", () => { renderTimeline(); refreshHud(); });
+vid.addEventListener("error", () => {
+  $("#nodata").style.display = "block";
+  $("#nodata").textContent = "This browser can't play the video. Try Safari or Chrome, or export H.264.";
+});
+function loop() {
+  if (vid.paused) return;
+  updatePlayhead();
+  if (performance.now() - lastHud > 90) refreshHud();
+  requestAnimationFrame(loop);
+}
+document.addEventListener("keydown", e => {
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.key === " ") { e.preventDefault(); vid.paused ? vid.play() : vid.pause(); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); step(e.shiftKey ? "-1" : "-f"); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); step(e.shiftKey ? "1" : "+f"); }
+});
+new ResizeObserver(() => refreshHud()).observe(stage);
+
+/* ---------- sync tab ---------- */
+function renderSync() {
+  $("#offset").innerHTML = `${P.offset >= 0 ? "+" : "−"}${Math.abs(P.offset).toFixed(3)} <small>s</small>`;
+  $("#offsetSrc").textContent =
+    `The video starts ${Math.abs(P.offset).toFixed(2)} s ${P.offset >= 0 ? "after" : "before"} the RaceBox started logging. ` +
+    `Source: ${S.offset_source}.`;
+}
+$("#setLap").addEventListener("click", async () => {
+  vid.pause();
+  const r = await api("/api/sync-lap", { lap: +$("#lapSel").value, vt: vid.currentTime });
+  P.offset = r.offset; S.offset_source = `lap ${$("#lapSel").value} set at ${fmt(vid.currentTime)}`;
+  $("#saved").textContent = "Saved to " + S.project_file.split("/").pop(); $("#saved").classList.add("ok");
+  renderSync(); renderTimeline(); refreshHud();
+});
+document.querySelectorAll("[data-nudge]").forEach(b => b.addEventListener("click", () => {
+  const n = b.dataset.nudge, d = n === "-f" ? -1 / fps : n === "+f" ? 1 / fps : parseFloat(n);
+  save({ offset: +(P.offset + d).toFixed(4) });
+}));
+$("#auto").addEventListener("click", async () => {
+  const btn = $("#auto"), out = $("#autoRes");
+  btn.disabled = true;
+  out.textContent = S.video.has_gyro ? "Matching the camera gyro…" : "Measuring motion in the video. This can take a minute…";
+  try {
+    const r = await api("/api/autosync", {});
+    if (!r.ok) { out.innerHTML = `<span class="warn">${r.error}</span>`; return; }
+    P.offset = r.offset; S.offset_source = "auto-sync (" + r.method + ")";
+    let html = `Matched at ${r.offset.toFixed(2)} s (match ${r.score.toFixed(2)}).`;
+    if (!r.confident) {
+      html = `<span class="warn">Not sure: other laps match almost as well.</span> Check a lap start, or try:<br>`;
+      html += r.alternatives.map(a => `<button data-alt="${a.offset}">${a.offset.toFixed(2)} s</button>`).join("");
+    }
+    out.innerHTML = html;
+    out.querySelectorAll("[data-alt]").forEach(b => b.addEventListener("click", () => save({ offset: +b.dataset.alt })));
+    renderSync(); renderTimeline(); refreshHud();
+  } catch (e) { out.innerHTML = `<span class="warn">${e.message}</span>`; }
+  finally { btn.disabled = false; }
+});
+
+/* ---------- look tab ---------- */
+function renderLook() {
+  const th = $("#themes"); th.innerHTML = "";
+  for (const t of S.themes) {
+    const b = document.createElement("button");
+    b.className = "theme"; b.setAttribute("aria-pressed", P.theme === t.id);
+    const rgba = c => `rgba(${c[0]},${c[1]},${c[2]},${(c[3] ?? 255) / 255})`;
+    b.innerHTML = `${t.label}<div class="sw">${t.swatch.map(c => `<i style="background:${rgba(c)}"></i>`).join("")}</div>`;
+    b.addEventListener("click", () => { save({ theme: t.id }); renderLook(); });
+    th.appendChild(b);
+  }
+  document.querySelectorAll("#units button").forEach(b => b.setAttribute("aria-pressed", P.units === b.dataset.u));
+  $("#scale").value = P.scale; $("#scaleV").textContent = Math.round(P.scale * 100) + "%";
+  const list = $("#panelList"); list.innerHTML = "";
+  for (const p of S.data.panels) {
+    const cfg = P.layout[p.key] || {};
+    const row = document.createElement("div"); row.className = "prow";
+    const sc = cfg.scale ?? 1;
+    row.innerHTML = `<label><input type="checkbox" ${cfg.visible === false ? "" : "checked"}> ${p.label}</label>
+      <span></span><button>Reset position</button>
+      <input type="range" min="0.5" max="2" step="0.05" value="${sc}" aria-label="${p.label} size">
+      <span class="pct">${Math.round(sc * 100)}%</span>`;
+    const [chk, rng] = row.querySelectorAll("input");
+    chk.addEventListener("change", () => { setPanel(p.key, { visible: chk.checked }); });
+    rng.addEventListener("input", () => { row.querySelector(".pct").textContent = Math.round(rng.value * 100) + "%"; });
+    rng.addEventListener("change", () => setPanel(p.key, { scale: +rng.value }));
+    row.querySelector("button").addEventListener("click", () => {
+      const c = Object.assign({}, P.layout[p.key] || {}); delete c.x; delete c.y; P.layout[p.key] = c;
+      save({ layout: P.layout });
+    });
+    list.appendChild(row);
+  }
+}
+function setPanel(key, changes) {
+  P.layout[key] = Object.assign({}, P.layout[key] || {}, changes);
+  if (P.layout[key].visible === true) delete P.layout[key].visible;
+  save({ layout: P.layout });
+}
+document.querySelectorAll("#units button").forEach(b => b.addEventListener("click", () => { save({ units: b.dataset.u }); renderLook(); }));
+$("#scale").addEventListener("input", e => $("#scaleV").textContent = Math.round(e.target.value * 100) + "%");
+$("#scale").addEventListener("change", e => save({ scale: +e.target.value }));
+$("#resetLayout").addEventListener("click", () => { save({ layout: {}, scale: 1 }); P.layout = {}; P.scale = 1; renderLook(); });
+
+document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + b.dataset.tab));
+}));
+
+/* ---------- render ---------- */
+let polling = null;
+$("#renderBtn").addEventListener("click", async () => {
+  const st = $("#renderBtn").dataset.running ? await api("/api/render/cancel", {}) :
+    await api("/api/render", { start: parseClock($("#rStart").value), end: parseClock($("#rEnd").value) });
+  showRender(st);
+  if (!polling) polling = setInterval(async () => showRender(await api("/api/render")), 700);
+});
+function showRender(st) {
+  const btn = $("#renderBtn"), bar = $("#rbar"), status = $("#rstatus");
+  const running = st.state === "running";
+  btn.textContent = running ? "Cancel" : "Render video";
+  btn.className = running ? "" : "primary";
+  btn.style.marginLeft = "auto";
+  if (running) btn.dataset.running = "1"; else delete btn.dataset.running;
+  bar.style.display = st.state === "idle" ? "none" : "block";
+  const pct = st.total ? st.done / st.total * 100 : 0;
+  bar.firstElementChild.style.width = (st.state === "done" ? 100 : pct) + "%";
+  if (running) {
+    const eta = st.fps ? (st.total - st.done) / st.fps : 0;
+    status.textContent = st.total ? `Frame ${st.done} of ${st.total}, ${st.fps.toFixed(0)} fps, about ${Math.ceil(eta / 60)} min left` : "Starting…";
+  } else if (st.state === "done") status.textContent = "Rendered " + st.out;
+  else if (st.state === "error") status.textContent = st.error;
+  else status.textContent = "";
+  if (!running && polling) { clearInterval(polling); polling = null; }
+}
+
+/* ---------- start ---------- */
+(async () => {
+  S = await api("/api/state");
+  P = S.project; P.layout = P.layout || {};
+  fps = S.video.fps || 30;
+  $("#files").textContent = `${S.video.name} with ${S.data.name}`;
+  $("#autoDesc").textContent = S.video.has_gyro
+    ? "Matches the gyro recorded by your Insta360 against the RaceBox yaw rate."
+    : "Matches sideways motion in the video against the RaceBox yaw rate.";
+  $("#lapSel").innerHTML = S.data.laps.map(l => `<option value="${l.n}">Lap ${l.n}</option>`).join("");
+  if (S.data.laps.length > 1) $("#lapSel").value = 2;
+  $("#lapTable").innerHTML = S.data.laps.map(l =>
+    `<tr data-lap="${l.n}" class="${l.n === S.data.best ? "best" : ""}"><td>Lap ${l.n}</td>
+     <td>${l.sectors ? l.sectors.join("  ") : ""}</td><td>${l.time_str}</td></tr>`).join("");
+  document.querySelectorAll("#lapTable tr").forEach(tr => tr.addEventListener("click", () => {
+    const l = S.data.laps.find(x => x.n === +tr.dataset.lap); seek(Math.max(l.start - P.offset, 0));
+  }));
+  if (!S.data.laps.length) { $("#setLap").disabled = true; }
+  renderSync(); renderLook(); renderTimeline();
+  showRender(await api("/api/render"));
+  refreshHud();
+})();
+</script>
+</body>
+</html>
