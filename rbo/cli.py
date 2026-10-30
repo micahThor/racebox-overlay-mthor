@@ -45,7 +45,7 @@ def apply_project(args) -> None:
         if not args.session:
             sys.exit("no session given, and none saved for this video yet")
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
-    for k in ("units", "scale", "theme", "track", "sectors"):
+    for k in ("units", "scale", "theme", "track", "sectors", "speed_max"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
@@ -201,7 +201,8 @@ def _setup(args):
     hide = set(filter(None, (args.hide or "").split(",")))
     try:
         hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
-                  font=args.font, hide=hide, theme=args.theme, layout=args.layout)
+                  font=args.font, hide=hide, theme=args.theme, layout=args.layout,
+                  speed_max=args.speed_max)
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -247,7 +248,8 @@ def cmd_render(args):
     out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
     print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
     try:
-        video.render(args.video, hud, offset, out, start, end, args.codec, args.bitrate, args.quality)
+        video.render(args.video, hud, offset, out, start, end, args.codec, args.bitrate, args.quality,
+                     workers=args.workers)
     except video.RenderError as e:
         sys.exit(str(e))
 
@@ -294,6 +296,8 @@ def main(argv=None):
         s.add_argument("--units", choices=["mph", "kmh"], default=None, help="default mph")
         s.add_argument("--scale", type=float, default=None, help="HUD size multiplier")
         s.add_argument("--theme", help="carbon, daylight, neon, minimal, or a theme .json file")
+        s.add_argument("--speed-max", type=float, default=None, metavar="N",
+                       help="top of the speedometer scale (default 70 mph / 120 km/h)")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
         s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
         p.add_argument("-o", "--output")
@@ -329,6 +333,8 @@ def main(argv=None):
     p.add_argument("--bitrate", help="e.g. 40M (default scales with resolution)")
     p.add_argument("--quality", choices=["fast", "best"], default="fast",
                    help="fast = hardware encoder (VideoToolbox) when available")
+    p.add_argument("--workers", type=int, default=None,
+                   help="CPU cores drawing the overlay in parallel (default: all but one)")
     p.set_defaults(fn=cmd_render)
 
     args = ap.parse_args(argv)

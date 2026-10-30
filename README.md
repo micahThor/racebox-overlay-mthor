@@ -6,19 +6,21 @@ delta, sector times, track map with your position, speed, and a G-force
 circle (or a lean-angle gauge for bike sessions). Runs on your Mac, uses
 ffmpeg with the VideoToolbox hardware encoder.
 
-```
-┌──────────────────────┐                    ┌──────────────┐
-│ LAP 3/5      -0.32   │                    │   track map  │
-│ 1:12.4               │                    │      ●       │
-│ LAST 58.53 BEST 57.68│                    └──────────────┘
-│ [S1 18.28][S2 11.7][S3]
-└──────────────────────┘
-┌──────────────┐                                ┌──────────┐
-│ 101 MPH      │                                │ G circle │
-│ ▬▬▬▬▬▬▬▬▬▬   │                                │    ●     │
-│ ALT  YAW     │                                └──────────┘
-└──────────────┘
-```
+The overlay has four panels, each movable, resizable and optional:
+
+- **Lap timer:** running lap time, live delta to your best lap, last and
+  best lap, and a sector bar that fills as you ride each sector, turning
+  purple (session best), green (improved) or yellow.
+- **Track map:** your racing line with a motorcycle marker showing where you
+  are, plus the start/finish line and sector points.
+- **Speedometer:** a 0–70 mph gauge (0–120 km/h in metric) with a red zone
+  near the top, plus altitude and yaw rate. Change the top speed with
+  `--speed-max` or in the editor.
+- **G-force** circle with a trail (or a **lean angle** gauge for bike-mode
+  RaceBox sessions).
+
+Everything is drawn at twice the output resolution and scaled down, so
+gauges and curves stay smooth even in 4K.
 
 ## Setup (macOS)
 
@@ -166,6 +168,8 @@ of the `.overlay.json`.
 |---|---|
 | `--units kmh` | km/h and metres (default mph and feet) |
 | `--theme neon` | carbon, daylight, neon, minimal, or a theme `.json` |
+| `--speed-max 80` | top of the speedometer (default 70 mph / 120 km/h) |
+| `--workers 4` | CPU cores drawing the overlay (default: all but one) |
 | `--scale 1.2` | make the HUD bigger or smaller |
 | `--hide map,gforce` | drop panels (`laps`, `map`, `speed`, `gforce`) |
 | `--sectors 4` | auto-split laps into N equal-distance sectors (default 3, 0 = off) |
@@ -198,8 +202,10 @@ session at that track with `--track mytrack.json`. See
 - `rbo/timing.py` — lap boundaries from the RaceBox lap column, refined to
   the exact line crossing between GPS samples; sector gates; live delta by
   distance into the lap against the reference lap.
-- `rbo/hud.py` — Pillow drawing. Panels are packed into a small "atlas"
-  image each frame, so only ~25% of the frame's pixels go through the pipe.
+- `rbo/hud.py` — Pillow drawing, at 2x resolution then scaled down for
+  smooth edges. Panels are packed into a small "atlas" image each frame, so
+  only ~25% of the frame's pixels go through the pipe, and frames are drawn
+  on several CPU cores at once.
 - `rbo/sync.py` — auto-sync: reads the IMU log from the `.insv` trailer (or
   measures image motion), then slides it along the RaceBox yaw rate with a
   normalised cross-correlation to find the best match.

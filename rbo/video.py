@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import io
 import json
+import multiprocessing
+import os
 import queue
 import shutil
 import subprocess
@@ -94,11 +96,29 @@ def encoder_args(codec: str, width: int, height: int, fps: float, bitrate: str |
     return args + ["-pix_fmt", "yuv420p"]
 
 
+_HUD = None
+
+
+def _init_worker(spec: dict) -> None:
+    global _HUD
+    _HUD = Hud(**spec)
+
+
+def _render_one(t: float) -> bytes:
+    return _HUD.render_atlas(t).tobytes()
+
+
+def default_workers() -> int:
+    return max(1, min((os.cpu_count() or 2) - 1, 8))
+
+
 def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
            end: float | None = None, codec: str = "h264", bitrate: str | None = None,
-           quality: str = "fast", progress=None, cancel: threading.Event | None = None) -> None:
+           quality: str = "fast", progress=None, cancel: threading.Event | None = None,
+           workers: int | None = None) -> None:
     """progress(done, total, fps) is called every ~60 frames (default: print).
-    Setting `cancel` stops the render early."""
+    Setting `cancel` stops the render early. Overlay frames are drawn on
+    `workers` processes in parallel (default: one per CPU core, minus one)."""
     info = probe(video)
     fps = info["fps"]
     end = min(end or info["duration"], info["duration"])
@@ -156,17 +176,29 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
 
     t0 = time.time()
     spf = 1 / float(fps)
+    times = [start + i * spf + offset for i in range(n_frames)]
+    workers = default_workers() if workers is None else max(1, workers)
+    pool = None
+    if workers > 1 and n_frames > 60:
+        pool = multiprocessing.get_context("spawn").Pool(
+            workers, initializer=_init_worker, initargs=(hud.spec,))
+        frames = pool.imap(_render_one, times, chunksize=4)
+    else:
+        frames = (hud.render_atlas(t).tobytes() for t in times)
     try:
-        for i in range(n_frames):
+        for i, buf in enumerate(frames):
             if proc.poll() is not None or (cancel is not None and cancel.is_set()):
                 break
-            q.put(hud.render_atlas(start + i * spf + offset).tobytes())
+            q.put(buf)
             if i % 60 == 0 or i == n_frames - 1:
                 el = time.time() - t0
                 progress(i + 1, n_frames, (i + 1) / el if el else 0.0)
     except KeyboardInterrupt:
         print("\n  stopped; the partial file may not play")
     finally:
+        if pool is not None:
+            pool.terminate()
+            pool.join()
         q.put(None)
         threads[0].join()
         proc.wait()

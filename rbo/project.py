@@ -10,6 +10,7 @@ still win over anything in the file.
       "theme": "carbon",            built-in name or path to a theme JSON
       "units": "mph",
       "scale": 1.0,
+      "speed_max": 70,              top of the speedometer (null = 70 mph / 120 km/h)
       "layout": {"map": {"x": 0.38, "y": 0.62, "scale": 1.3}, "speed": {"visible": false}},
       "track": null,
       "sectors": 3
@@ -21,7 +22,7 @@ import json
 from pathlib import Path
 
 DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
-            "layout": {}, "track": None, "sectors": 3, "session": None}
+            "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None}
 
 
 def path_for(video: str | Path) -> Path:

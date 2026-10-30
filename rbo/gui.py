@@ -72,7 +72,8 @@ class Studio:
 
     def hud(self, width: int, height: int) -> Hud:
         key = json.dumps([width, height, self.proj.get("theme"), self.proj.get("units"),
-                          self.proj.get("scale"), self.proj.get("layout")], sort_keys=True)
+                          self.proj.get("scale"), self.proj.get("speed_max"),
+                          self.proj.get("layout")], sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
             if h is None:
@@ -80,7 +81,7 @@ class Studio:
                     self._huds.clear()
                 h = Hud(self.tel, self.tm, width, height, units=self.proj.get("units") or "mph",
                         scale=float(self.proj.get("scale") or 1.0), theme=self.proj.get("theme"),
-                        layout=self.proj.get("layout") or {})
+                        layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"))
                 self._huds[key] = h
             return h
 
@@ -147,7 +148,7 @@ class Studio:
                             "in_data": inside}}
 
     def update_project(self, changes: dict) -> dict:
-        allowed = {"offset", "theme", "units", "scale", "layout"}
+        allowed = {"offset", "theme", "units", "scale", "layout", "speed_max"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -189,7 +190,8 @@ class Studio:
             try:
                 h = Hud(self.tel, self.tm, self.vinfo["width"], self.vinfo["height"],
                         units=self.proj.get("units") or "mph", scale=float(self.proj.get("scale") or 1),
-                        theme=self.proj.get("theme"), layout=self.proj.get("layout") or {})
+                        theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
+                        speed_max=self.proj.get("speed_max"))
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate)

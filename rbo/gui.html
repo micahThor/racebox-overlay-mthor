@@ -216,6 +216,11 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
         <button data-u="mph">mph</button><button data-u="kmh">km/h</button>
       </div>
 
+      <h2>Speedometer top speed</h2>
+      <div class="row"><input type="number" id="vmax" min="20" max="400" step="5"
+        style="width:96px;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-family:var(--num);font-size:16px"
+        aria-label="Speedometer top speed"><span class="pct" id="vmaxU"></span></div>
+
       <h2>Overall size</h2>
       <div class="row"><input type="range" id="scale" min="0.6" max="1.6" step="0.05" style="flex:1">
         <span class="pct" id="scaleV"></span></div>
@@ -460,6 +465,8 @@ function renderLook() {
   }
   document.querySelectorAll("#units button").forEach(b => b.setAttribute("aria-pressed", P.units === b.dataset.u));
   $("#scale").value = P.scale; $("#scaleV").textContent = Math.round(P.scale * 100) + "%";
+  $("#vmax").value = P.speed_max || (P.units === "kmh" ? 120 : 70);
+  $("#vmaxU").textContent = P.units === "kmh" ? "km/h" : "mph";
   const list = $("#panelList"); list.innerHTML = "";
   for (const p of S.data.panels) {
     const cfg = P.layout[p.key] || {};
@@ -485,9 +492,18 @@ function setPanel(key, changes) {
   if (P.layout[key].visible === true) delete P.layout[key].visible;
   save({ layout: P.layout });
 }
-document.querySelectorAll("#units button").forEach(b => b.addEventListener("click", () => { save({ units: b.dataset.u }); renderLook(); }));
+document.querySelectorAll("#units button").forEach(b => b.addEventListener("click", () => {
+  if (b.dataset.u === P.units) return;
+  const ch = { units: b.dataset.u };
+  if (P.speed_max) ch.speed_max = Math.round(b.dataset.u === "kmh" ? P.speed_max * 1.609344 / 5 : P.speed_max / 1.609344 / 5) * 5;
+  save(ch); renderLook();
+}));
 $("#scale").addEventListener("input", e => $("#scaleV").textContent = Math.round(e.target.value * 100) + "%");
 $("#scale").addEventListener("change", e => save({ scale: +e.target.value }));
+$("#vmax").addEventListener("change", e => {
+  const v = +e.target.value;
+  if (v >= 20 && v <= 400) save({ speed_max: v });
+});
 $("#resetLayout").addEventListener("click", () => { save({ layout: {}, scale: 1 }); P.layout = {}; P.scale = 1; renderLook(); });
 
 document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => {
