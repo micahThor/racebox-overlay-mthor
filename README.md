@@ -125,11 +125,18 @@ Add `--start 3:30 --end 12:00` to render only part of the clip.
 ## The editor
 
 ```bash
-racebox-overlay gui VID_20261024_103015.mp4 session.csv
+racebox-overlay gui
 ```
 
-This opens the editor in your browser: your video with the overlay on top,
-and a lap timeline under it showing where each lap falls.
+This opens the editor in your browser. Choose your video and RaceBox file
+with the **Choose…** buttons (your Mac's normal file picker), or click one
+of your recent videos; a video you've used before remembers its RaceBox file
+and every setting. **Open…** at the top switches to other files later. You
+can still name the files on the command line:
+`racebox-overlay gui VID_20261024_103015.mp4 session.csv`.
+
+You'll see your video with the overlay on top, and a lap timeline under it
+showing where each lap falls.
 
 - **Sync tab:** press *Auto-sync*, or pause on the frame where you cross
   the start/finish line, choose the lap, and press *Set sync here*. Nudge by
@@ -183,8 +190,8 @@ The ghost can also be any lap from another RaceBox file and its video at the
 same track: your own lap from another day, or a friend's.
 
 - In the editor, choose **Another session** under the ghost switch, paste the
-  RaceBox file's and the video's paths (in Finder, select a file and press
-  Option-Command-C to copy its path), press **Load laps** and pick the lap.
+  RaceBox file and its video with the **Choose…** buttons (or paste their
+  paths), press **Load laps** and pick the lap.
   Laps are numbered as that RaceBox file numbers them.
 - From the command line:
   `racebox-overlay render VID.mp4 --ghost --ghost-session other.csv --ghost-video other.mp4 --ghost-lap 4`

@@ -47,6 +47,19 @@ header {
 }
 header h1 { font: 600 17px var(--ui); margin: 0; }
 header .files { color: var(--muted); font-size: 14px; }
+.hbtn { font-size: 13px; padding: 5px 10px; }
+.openscreen { position: fixed; inset: 0; background: rgba(10, 12, 16, .82); z-index: 50; display: grid;
+  place-items: start center; padding: 8vh 16px; overflow: auto; }
+.openscreen[hidden] { display: none; }
+.openbox { width: min(640px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 22px 24px; }
+.openbox h2 { margin: 0 0 8px; }
+.olabel { display: block; margin: 14px 0 6px; font-weight: 600; font-size: 14px; }
+.oerr { color: var(--amber); font-size: 14px; }
+.openbox .link { background: none; border: 0; color: var(--muted); text-decoration: underline; }
+.recent { list-style: none; margin: 0; padding: 0; }
+.recent li button { width: 100%; text-align: left; display: block; margin: 4px 0; padding: 8px 10px; }
+.recent small { display: block; color: var(--muted); font-size: 12px; word-break: break-all; }
 header .saved { margin-left: auto; color: var(--muted); font-size: 13px; }
 header .saved.ok::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: var(--green); margin-right: 7px; vertical-align: 1px; }
@@ -189,12 +202,35 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
 <header>
   <h1>RaceBox Overlay Editor</h1>
   <span class="files" id="files">Loading…</span>
+  <button id="openBtn" class="hbtn">Open…</button>
   <span class="saved" id="saved"></span>
 </header>
+<div class="openscreen" id="openScreen" hidden>
+  <div class="openbox" role="dialog" aria-labelledby="openTitle">
+    <h2 id="openTitle">Open a video</h2>
+    <p class="hint">Choose the video from your camera and the RaceBox file from the same ride.
+      Settings you've saved for a video come back when you open it again.</p>
+    <label class="olabel" for="oVideo">Video</label>
+    <div class="row"><input type="text" id="oVideo" class="path" placeholder="/path/to/VID_20261024_103015.mp4">
+      <button id="oPickVideo">Choose…</button></div>
+    <label class="olabel" for="oSession">RaceBox file</label>
+    <div class="row"><input type="text" id="oSession" class="path" placeholder="/path/to/session.csv (or .vbo)">
+      <button id="oPickSession">Choose…</button></div>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="oOpen">Open</button>
+      <button id="oCancel" class="link">Cancel</button>
+      <span class="oerr" id="oErr" role="status"></span>
+    </div>
+    <div id="oRecentBox">
+      <h2 style="margin-top:22px">Recent</h2>
+      <ul class="recent" id="oRecent"></ul>
+    </div>
+  </div>
+</div>
 <main>
   <section class="left">
     <div class="stage" id="stage">
-      <video id="vid" src="/video" preload="auto" playsinline muted></video>
+      <video id="vid" preload="auto" playsinline muted></video>
       <div class="overlay" id="overlay"></div>
       <div class="nodata" id="nodata">No RaceBox data at this point in the video</div>
     </div>
@@ -261,12 +297,11 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
           <button data-from="own">Fastest lap in this video</button><button data-from="other">Another session</button>
         </div>
         <div id="ghOther" style="display:none;margin-top:10px">
-          <p class="hint">Another RaceBox file and its video from the same track: another day, or a friend's lap.
-            To get a file's path on a Mac, select it in Finder and press Option-Command-C, then paste here.</p>
+          <p class="hint">Another RaceBox file and its video from the same track: another day, or a friend's lap.</p>
           <div class="row" style="margin-top:8px"><input type="text" id="ghSession" class="path"
-            placeholder="RaceBox file (.csv or .vbo)" aria-label="Ghost RaceBox file"></div>
+            placeholder="RaceBox file (.csv or .vbo)" aria-label="Ghost RaceBox file"><button id="ghPickSession">Choose…</button></div>
           <div class="row" style="margin-top:6px"><input type="text" id="ghVideo" class="path"
-            placeholder="Its video (.mp4)" aria-label="Ghost video"></div>
+            placeholder="Its video (.mp4)" aria-label="Ghost video"><button id="ghPickVideo">Choose…</button></div>
           <div class="row" style="margin-top:6px"><button id="ghLoad">Load laps</button>
             <select id="ghLap" aria-label="Ghost lap" style="flex:1" disabled><option>Load the laps first</option></select></div>
           <div class="result" id="ghInfo"></div>
@@ -992,9 +1027,80 @@ function showRender(st) {
   if (!running && polling) { clearInterval(polling); polling = null; }
 }
 
+/* ---------- opening files ---------- */
+let canCancelOpen = false;
+function showOpen(rec, cancellable) {
+  canCancelOpen = cancellable;
+  $("#openScreen").hidden = false;
+  $("#oCancel").style.display = cancellable ? "" : "none";
+  $("#oErr").textContent = "";
+  const ul = $("#oRecent"); ul.innerHTML = "";
+  $("#oRecentBox").style.display = rec && rec.length ? "" : "none";
+  for (const r of rec || []) {
+    const li = document.createElement("li");
+    li.innerHTML = `<button>${r.name}<small>${r.folder}${r.session ? "" : " · RaceBox file needed"}</small></button>`;
+    li.querySelector("button").addEventListener("click", () => {
+      $("#oVideo").value = r.video; $("#oSession").value = r.session || "";
+      if (r.session) doOpen(); else $("#oErr").textContent = "Choose the RaceBox file for this video.";
+    });
+    ul.appendChild(li);
+  }
+}
+const folderOf = p => p && p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : null;
+async function pick(kind, input, other) {
+  $("#oErr").textContent = "";
+  let r;
+  try { r = await api("/api/pick", { kind, dir: folderOf(input.value) || folderOf(other ? other.value : "") }); }
+  catch (e) { $("#oErr").textContent = e.message; return false; }
+  if (r.path) { input.value = r.path; return true; }
+  return false;
+}
+async function doOpen() {
+  const video = $("#oVideo").value.trim(), session = $("#oSession").value.trim();
+  if (!video) { $("#oErr").textContent = "Choose a video first."; return; }
+  $("#oErr").textContent = "Opening…"; $("#oOpen").disabled = true;
+  try {
+    const r = await api("/api/open", { video, session: session || null });
+    if (!r.ok) { $("#oErr").textContent = r.error; return; }
+    location.reload();
+  } catch (e) { $("#oErr").textContent = e.message; }
+  finally { $("#oOpen").disabled = false; }
+}
+$("#oPickVideo").addEventListener("click", async () => {
+  if (await pick("video", $("#oVideo"), $("#oSession"))) {
+    const r = await api("/api/peek", { video: $("#oVideo").value });       // its saved RaceBox file
+    if (r.session && !$("#oSession").value) $("#oSession").value = r.session;
+  }
+});
+$("#oPickSession").addEventListener("click", () => pick("session", $("#oSession"), $("#oVideo")));
+$("#oOpen").addEventListener("click", doOpen);
+$("#oCancel").addEventListener("click", () => { $("#openScreen").hidden = true; });
+$("#openBtn").addEventListener("click", async () => {
+  const st = await api("/api/state");
+  if (S && S.video) { $("#oVideo").value = ""; $("#oSession").value = ""; }
+  showOpen(st.recent, !!(S && S.video));
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("#openScreen").hidden && canCancelOpen) $("#openScreen").hidden = true;
+});
+// ghost lap files from the same picker
+$("#ghPickSession").addEventListener("click", async () => {
+  if (await pickInto("ghost_session", $("#ghSession"))) loadGhostLaps(false);
+});
+$("#ghPickVideo").addEventListener("click", () => pickInto("ghost_video", $("#ghVideo"), $("#ghSession")));
+async function pickInto(kind, input, other) {
+  let r;
+  try { r = await api("/api/pick", { kind, dir: folderOf(input.value) || folderOf(other ? other.value : "") || folderOf(S.project.session) }); }
+  catch (e) { $("#ghInfo").innerHTML = `<span class="warn">${e.message}</span>`; return false; }
+  if (r.path) { input.value = r.path; return true; }
+  return false;
+}
+
 /* ---------- start ---------- */
 (async () => {
   S = await api("/api/state");
+  if (S.needs_files) { $("#files").textContent = "No video open"; showOpen(S.recent, false); return; }
+  vid.src = "/video";
   P = S.project; P.layout = P.layout || {};
   fps = S.video.fps || 30;
   $("#files").textContent = `${S.video.name} with ${S.data.name}`;

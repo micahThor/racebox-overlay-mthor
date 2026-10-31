@@ -587,7 +587,7 @@ def main(argv=None):
     p.set_defaults(fn=cmd_voices)
 
     p = sub.add_parser("gui", help="open the sync & layout editor in your browser")
-    p.add_argument("video")
+    p.add_argument("video", nargs="?", help="the video (or choose it in the editor)")
     p.add_argument("session", nargs="?", help="RaceBox CSV/VBO (optional once saved)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true", help="don't open a browser window")

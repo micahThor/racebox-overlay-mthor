@@ -1,5 +1,6 @@
 """Local web app for setting the sync point and editing the overlay layout.
 
+    racebox-overlay gui                      (choose the files in the editor)
     racebox-overlay gui VIDEO.mp4 SESSION.csv
 
 Starts a small server on 127.0.0.1 and opens the editor in your browser. The
@@ -14,7 +15,9 @@ import base64
 import io
 import json
 import mimetypes
+import os
 import re
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -38,7 +41,7 @@ class Studio:
         self.proj = project.load(self.video_path)
         session_path = session_path or self.proj.get("session")
         if not session_path:
-            sys.exit("give the RaceBox session file too:  racebox-overlay gui VIDEO SESSION.csv")
+            raise ValueError("choose the RaceBox file for this video too")
         self.proj["session"] = str(Path(session_path).resolve())
         self.tel = telemetry.load(self.proj["session"])
         self.tm = timing.Timing(self.tel, track=timing.load_track(self.proj.get("track")),
@@ -460,8 +463,92 @@ class Studio:
         return self.render_state
 
 
+# ---------------------------------------------------------------- opening files
+
+RECENT = Path.home() / ".racebox-overlay" / "recent.json"
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".insv"}
+SESSION_EXT = {".csv", ".vbo"}
+
+
+def recent() -> list[dict]:
+    """Videos opened before that still exist, newest first, with their saved session."""
+    try:
+        items = json.loads(RECENT.read_text())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for v in items:
+        if Path(v).exists():
+            proj = project.load(v)
+            sess = proj.get("session")
+            out.append({"video": v, "name": Path(v).name, "folder": str(Path(v).parent),
+                        "session": sess if sess and Path(sess).exists() else None})
+    return out[:8]
+
+
+def remember(video_path: str) -> None:
+    try:
+        items = [v for v in json.loads(RECENT.read_text()) if v != video_path] if RECENT.exists() else []
+    except (OSError, ValueError):
+        items = []
+    try:
+        RECENT.parent.mkdir(parents=True, exist_ok=True)
+        RECENT.write_text(json.dumps([video_path] + items[:19]))
+    except OSError:
+        pass
+
+
+def pick_file(kind: str, start_dir: str | None = None) -> dict:
+    """Show the computer's own file picker (the editor runs on this computer,
+    so the chosen file's full path can be used directly)."""
+    prompt = {"video": "Choose your video", "session": "Choose the RaceBox file (.csv or .vbo)",
+              "ghost_video": "Choose the ghost lap's video",
+              "ghost_session": "Choose the ghost lap's RaceBox file"}.get(kind, "Choose a file")
+    folder = start_dir if start_dir and Path(start_dir).is_dir() else None
+    if sys.platform == "darwin":
+        types = ' of type {"public.movie"}' if kind.endswith("video") else ""
+        loc = ' default location (POSIX file "{}")'.format(folder.replace('"', '\\"')) if folder else ""
+        script = f'POSIX path of (choose file with prompt "{prompt}"{types}{loc})'
+        # "activate" brings the dialog in front of the browser
+        r = subprocess.run(["osascript", "-e", "activate", "-e", script], capture_output=True, text=True)
+        if r.returncode != 0:
+            if "-128" in r.stderr or "cancel" in r.stderr.lower():
+                return {"cancelled": True}
+            return {"error": r.stderr.strip() or "the file picker didn't open"}
+        return {"path": r.stdout.strip()}
+    try:                                    # elsewhere: Tk's file dialog, if Python has it
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        ft = [("Video", "*.mp4 *.mov *.m4v *.insv")] if kind.endswith("video") else [("RaceBox", "*.csv *.vbo")]
+        path = filedialog.askopenfilename(title=prompt, initialdir=folder or os.getcwd(), filetypes=ft + [("All", "*")])
+        root.destroy()
+        return {"path": path} if path else {"cancelled": True}
+    except Exception:  # noqa: BLE001
+        return {"error": "no file picker available here; paste the file's path instead"}
+
+
+def open_files(video_path: str, session_path: str | None) -> Studio:
+    v = Path(str(video_path).strip().strip("'\"")).expanduser()
+    if not v.exists():
+        raise ValueError(f"can't find the video {v}")
+    if session_path:
+        s_ = Path(str(session_path).strip().strip("'\"")).expanduser()
+        if not s_.exists():
+            raise ValueError(f"can't find the RaceBox file {s_}")
+        session_path = str(s_)
+    st = Studio(str(v), session_path)
+    st.save()
+    remember(st.video_path)
+    print(f"\nopened {Path(st.video_path).name} with {Path(st.proj['session']).name}"
+          f"\nsettings save to {project.path_for(st.video_path)}", flush=True)
+    return st
+
+
 class Handler(BaseHTTPRequestHandler):
-    studio: Studio
+    studio: Studio | None = None
 
     def log_message(self, *a):
         pass
@@ -501,7 +588,11 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/ghost-laps":
                 self._json(self.studio.ghost_laps(q.get("session", [""])[0]))
             elif u.path == "/api/state":
-                self._json(self.studio.state())
+                st = self.studio.state() if self.studio else {"needs_files": True}
+                st["recent"] = recent()
+                self._json(st)
+            elif self.studio is None and u.path.startswith(("/api/", "/video", "/ghost-video")):
+                self._json({"error": "no video open yet"}, HTTPStatus.CONFLICT)
             elif u.path == "/api/hud":
                 self._json(self.studio.hud_frame(float(q["vt"][0]), int(float(q.get("pw", ["960"])[0]))))
             elif u.path == "/api/render":
@@ -527,6 +618,26 @@ class Handler(BaseHTTPRequestHandler):
         try:
             b = self._body()
             s = self.studio
+            if u.path == "/api/pick":
+                self._json(pick_file(b.get("kind", "video"), b.get("dir")))
+                return
+            if u.path == "/api/open":
+                try:
+                    if self.studio and self.studio.render_state.get("state") == "running":
+                        raise ValueError("wait for the render to finish (or cancel it) before opening other files")
+                    Handler.studio = open_files(b["video"], b.get("session"))
+                    self._json({"ok": True})
+                except Exception as e:  # noqa: BLE001 - shown in the open screen
+                    self._json({"ok": False, "error": str(e)})
+                return
+            if u.path == "/api/peek":           # what's saved for a video, before opening it
+                v = Path(str(b.get("video", "")).strip()).expanduser()
+                sess = project.load(v).get("session") if v.exists() else None
+                self._json({"session": sess if sess and Path(sess).exists() else None})
+                return
+            if s is None:
+                self._json({"error": "no video open yet"}, HTTPStatus.CONFLICT)
+                return
             if u.path == "/api/project":
                 self._json(s.update_project(b))
             elif u.path == "/api/sync-lap":
@@ -585,9 +696,14 @@ class Handler(BaseHTTPRequestHandler):
                 left -= len(chunk)
 
 
-def serve(video_path: str, session_path: str | None, port: int = 8765,
+def serve(video_path: str | None, session_path: str | None, port: int = 8765,
           open_browser: bool = True) -> None:
-    studio = Studio(video_path, session_path)
+    studio = None
+    if video_path:
+        try:
+            studio = open_files(video_path, session_path)
+        except ValueError as e:
+            print(f"{e}; choose the files in the editor instead")
     Handler.studio = studio
     httpd = None
     for p in range(port, port + 20):
@@ -600,7 +716,8 @@ def serve(video_path: str, session_path: str | None, port: int = 8765,
         sys.exit(f"no free port between {port} and {port + 19}")
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     print(f"editor running at {url}  (Ctrl-C to stop)")
-    print(f"settings save to {project.path_for(studio.video_path)}")
+    if studio is None:
+        print("choose your video and RaceBox file in the editor")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
