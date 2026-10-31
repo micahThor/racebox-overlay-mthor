@@ -138,8 +138,18 @@ and a lap timeline under it showing where each lap falls.
   straight away whether laps start where the video says they do.
 - **Look & layout tab:** pick a theme, mph or km/h, and overall size; show
   or hide panels and resize them; drag panels on the video to move them.
-- **Render video** at the bottom renders the whole clip, or a section if
-  you enter From/To times, to `VID_..._overlay.mp4` next to the original.
+- **Render video** at the bottom renders the whole clip, or a section, to
+  `VID_..._overlay.mp4` next to the original. To trim, scrub to where it
+  should begin and press **Set start here** (or the `[` key), then to the end
+  and press **Set end here** (`]`); you can also type From/To times. The
+  parts that won't be rendered are shaded on the timeline, and **Clear**
+  goes back to the whole video. The trim is saved, so `racebox-overlay
+  render` uses it too (`--start 0` renders everything).
+- **The Terminal** where you started the editor prints a clear result for
+  every sync: `auto-sync SUCCEEDED`, `FINISHED BUT NOT SURE` (with the other
+  candidates) or `FAILED` (with why), which method it used (the camera's
+  gyro log, or the slower motion-in-the-picture fallback), and syncs set by
+  hand and for a ghost from another session.
 
 Everything saves as you go to `VID_....mp4.overlay.json` next to the
 video. `render` and `preview` read that file, so after using the editor

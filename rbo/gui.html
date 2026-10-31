@@ -134,6 +134,11 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
   border-radius: 6px; padding: 6px 8px; font-family: var(--num); font-size: 16px; }
 .bar { height: 6px; background: var(--raised); border-radius: 3px; overflow: hidden; margin: 10px 0 6px; display: none; }
 .bar i { display: block; height: 100%; width: 0; background: var(--amber); }
+.trimrow { margin-top: 8px; }
+.trimrow button { font-size: 13px; padding: 5px 9px; }
+.trimrow .link { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 5px 4px; }
+.trimshade { position: absolute; top: 0; bottom: 0; background: rgba(0, 0, 0, .55); pointer-events: none; z-index: 1; }
+.trimedge { position: absolute; top: 0; bottom: 0; width: 2px; background: #6fd39a; pointer-events: none; z-index: 1; }
 .render .status { font-size: 13px; color: var(--muted); word-break: break-all; }
 
 /* crew chief */
@@ -205,7 +210,7 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
     <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Video position">
       <div class="playhead" id="playhead"></div>
     </div>
-    <p class="hint">Click a lap to jump to where it starts. Space plays and pauses, the arrow keys step a frame (with Shift, a second).</p>
+    <p class="hint">Click a lap to jump to where it starts. Space plays and pauses, the arrow keys step a frame (with Shift, a second). [ and ] set where the render starts and ends.</p>
   </section>
 
   <aside>
@@ -358,6 +363,12 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <label class="hint" for="rEnd">to</label><input id="rEnd" placeholder="end" aria-label="Render to">
         <button class="primary" id="renderBtn" style="margin-left:auto">Render video</button>
       </div>
+      <div class="row trimrow">
+        <button id="trimStart" title="Use the current video position as the start (key: [ )">Set start here</button>
+        <button id="trimEnd" title="Use the current video position as the end (key: ] )">Set end here</button>
+        <button id="trimClear" class="link" title="Render the whole video">Clear</button>
+      </div>
+      <div class="status" id="trimNote"></div>
       <div class="bar" id="rbar"><i></i></div>
       <div class="status" id="rstatus"></div>
     </div>
@@ -568,6 +579,8 @@ document.addEventListener("keydown", e => {
   if (e.key === " ") { e.preventDefault(); vid.paused ? vid.play() : vid.pause(); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); step(e.shiftKey ? "-1" : "-f"); }
   else if (e.key === "ArrowRight") { e.preventDefault(); step(e.shiftKey ? "1" : "+f"); }
+  else if (e.key === "[") { e.preventDefault(); setTrim("start", vid.currentTime); }
+  else if (e.key === "]") { e.preventDefault(); setTrim("end", vid.currentTime); }
 });
 new ResizeObserver(() => refreshHud()).observe(stage);
 
@@ -914,6 +927,42 @@ $("#rcRider").addEventListener("change", e => saveRace({ race_number: e.target.v
 $("#rcClass").addEventListener("change", e => save({ race_class: e.target.checked }));
 $("#rcField").addEventListener("change", e => save({ race_field: e.target.checked }));
 
+/* ---------- trim: which part of the video to render ---------- */
+function trimVals() {
+  const a = parseClock($("#rStart").value), b = parseClock($("#rEnd").value);
+  return [Number.isFinite(a) ? a : null, Number.isFinite(b) ? b : null];
+}
+function setTrim(which, t) {
+  t = Math.min(Math.max(t, 0), S.video.duration);
+  $(which === "start" ? "#rStart" : "#rEnd").value = fmt(t);
+  trimChanged();
+}
+function trimChanged() {
+  let [a, b] = trimVals();
+  if (a != null && b != null && b < a) {          // set the "wrong way round": swap them
+    [a, b] = [b, a];
+    $("#rStart").value = fmt(a); $("#rEnd").value = fmt(b);
+  }
+  renderTrim();
+  save({ trim: a == null && b == null ? null : { start: a, end: b } });
+}
+function renderTrim() {
+  if (!S) return;
+  const D = S.video.duration, [a, b] = trimVals();
+  tl.querySelectorAll(".trimshade, .trimedge").forEach(e => e.remove());
+  const add = (cls, l, w) => { const e = document.createElement("div"); e.className = cls;
+    e.style.left = (l / D * 100) + "%"; if (w != null) e.style.width = (w / D * 100) + "%"; tl.insertBefore(e, $("#playhead")); };
+  if (a != null && a > 0) { add("trimshade", 0, a); add("trimedge", a); }
+  if (b != null && b < D) { add("trimshade", b, D - b); add("trimedge", b); }
+  const note = $("#trimNote");
+  if (a == null && b == null) note.textContent = "Rendering the whole video.";
+  else note.textContent = `Rendering ${fmt(a ?? 0)} to ${fmt(b ?? D)} (${fmtShort((b ?? D) - (a ?? 0))} long).`;
+}
+$("#trimStart").addEventListener("click", () => setTrim("start", vid.currentTime));
+$("#trimEnd").addEventListener("click", () => setTrim("end", vid.currentTime));
+$("#trimClear").addEventListener("click", () => { $("#rStart").value = ""; $("#rEnd").value = ""; trimChanged(); });
+["#rStart", "#rEnd"].forEach(id => $(id).addEventListener("change", trimChanged));
+
 /* ---------- render ---------- */
 let polling = null;
 $("#renderBtn").addEventListener("click", async () => {
@@ -958,6 +1007,11 @@ function showRender(st) {
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
   renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls();
   if (P.ghost_source && P.ghost_source.session) loadGhostLaps(true);
+  if (P.trim) {
+    if (P.trim.start != null) $("#rStart").value = fmt(P.trim.start);
+    if (P.trim.end != null) $("#rEnd").value = fmt(P.trim.end);
+  }
+  renderTrim();
   showRender(await api("/api/render"));
   refreshHud();
 })();

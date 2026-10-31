@@ -454,6 +454,11 @@ def cmd_render(args):
     vinfo, tel, tm, offset, hud = _setup(args)
     start = parse_clock(args.start) if args.start else 0.0
     end = parse_clock(args.end) if args.end else None
+    trim = (args.project or {}).get("trim") or {}
+    if args.start is None and args.end is None and (trim.get("start") is not None or trim.get("end") is not None):
+        start, end = float(trim.get("start") or 0.0), trim.get("end")
+        print(f"trim: {clock(start)} to {clock(end) if end is not None else 'the end'} (set in the editor; "
+              "--start 0 renders all)")
     out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
     print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
     radio = None

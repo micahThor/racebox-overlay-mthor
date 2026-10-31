@@ -99,6 +99,9 @@ class Studio:
                     ref, how = gh.external_ref(self.tm, src["session"], src["video"], int(src["lap"]),
                                                src.get("offset"))
                     self._ghost, self.ghost_sync = ref, how
+                    print(f"ghost sync: lap {ref.number} of {Path(src['session']).name}, "
+                          f"{Path(src['video']).name} synced by {how} "
+                          f"({ref.offset_rel:.2f} s into its data). OK.", flush=True)
                     if src.get("offset") is None:          # keep the sync it found
                         src["offset"] = round(ref.offset_rel, 3)
                         self.proj["ghost_source"] = src
@@ -106,6 +109,7 @@ class Studio:
                         key = self._ghost_key()
                 except gh.GhostError as e:
                     self.ghost_error = str(e).removeprefix("ghost: ")
+                    print(f"ghost sync FAILED: {self.ghost_error}", flush=True)
             else:
                 off = self.t0 + float(self.proj["offset"])
                 i = gh.choose_ref(self.tm, off, self.vinfo["duration"], avoid=self._avoid())
@@ -209,7 +213,7 @@ class Studio:
         return {
             "video": {"name": Path(self.video_path).name, "width": v["width"], "height": v["height"],
                       "fps": float(v["fps"]), "duration": v["duration"],
-                      "has_gyro": sync.has_trailer(self.video_path)},
+                      "has_gyro": self.has_gyro()},
             "data": {"name": Path(self.proj["session"]).name, "duration": self.tel.duration,
                      "laps": laps, "best": best, "bike": self.tel.is_bike,
                      "panels": self._panel_keys()},
@@ -337,7 +341,7 @@ class Studio:
 
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
-                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source",
+                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
                    "race", "race_source", "race_number", "race_class", "race_field"}
         for k, v in changes.items():
             if k in allowed:
@@ -353,19 +357,53 @@ class Studio:
         lap = next((l for l in self.tm.laps if l.number == n), None)
         if lap is None:
             raise ValueError(f"no lap {n}")
-        return self.update_project({"offset": round(lap.t_start - self.t0 - vt, 3)})
+        res = self.update_project({"offset": round(lap.t_start - self.t0 - vt, 3)})
+        print(f"sync SET BY HAND: lap {n} starts at {vt:.2f} s in the video, so the video starts "
+              f"{res['offset']:.2f} s into the RaceBox data. Saved.", flush=True)
+        return res
+
+    def has_gyro(self) -> bool:
+        """Whether the video carries a usable Insta360 gyro log (cached)."""
+        if not hasattr(self, "_has_gyro"):
+            self._has_gyro = False
+            if sync.has_trailer(self.video_path):
+                try:
+                    self._has_gyro = 0x300 in sync.read_insv_trailer(self.video_path)
+                except sync.SyncError:
+                    pass
+        return self._has_gyro
 
     def auto_sync(self) -> dict:
         prior = None
         guess = self._clock_guess()
         if self.vinfo.get("created") is not None and guess:
             prior = self.t0 + guess
+        name = Path(self.video_path).name
+        how = "the camera's gyro log" if self.has_gyro() else "motion in the picture (no gyro log found; slower)"
+        print(f"\nauto-sync: matching {how} in {name} against the RaceBox"
+              + (", camera clock as a rough anchor" if prior is not None else ""), flush=True)
         try:
             r = sync.auto_sync(self.video_path, self.tel, prior=prior)
         except sync.SyncError as e:
+            print(f"\nauto-sync FAILED: {e}\n  Line up a lap by hand instead: pause on the start/finish line, "
+                  "pick the lap, Set sync here.", flush=True)
             return {"ok": False, "error": str(e)}
+        except Exception as e:  # noqa: BLE001
+            print(f"\nauto-sync FAILED with an unexpected error: {e!r}", flush=True)
+            raise
         res = self.update_project({"offset": round(r.offset - self.t0, 3)})
         self.offset_source = f"auto ({r.method})"
+        lap1 = ""
+        if self.tm.laps:
+            lap1 = f", lap {self.tm.laps[0].number} starts at {self.tm.laps[0].t_start - r.offset:.1f} s in the video"
+        if r.confident:
+            print(f"\nauto-sync SUCCEEDED: video starts {res['offset']:.2f} s into the RaceBox data "
+                  f"({r.method}, match {r.score:.2f}){lap1}. Saved.", flush=True)
+        else:
+            why = "weak match" if r.score < 0.5 else "other laps match almost as well"
+            print(f"\nauto-sync FINISHED BUT NOT SURE ({why}): best match {res['offset']:.2f} s "
+                  f"(match {r.score:.2f}){lap1}. Saved; check a lap start. Other candidates: "
+                  + ", ".join(f"{o - self.t0:.2f} s" for o, _ in r.alternatives), flush=True)
         return {"ok": True, "offset": res["offset"], "score": r.score, "confident": r.confident,
                 "method": r.method,
                 "alternatives": [{"offset": round(o - self.t0, 3), "score": s} for o, s in r.alternatives]}
