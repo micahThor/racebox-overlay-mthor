@@ -129,6 +129,7 @@ DEFAULTS = {
     "max_corner_calls": 2,    # most mistake calls per lap
     "consistency_s": 0.35,    # laps within this spread count as consistent
     "ghost_gap_m": 5.0,       # ghost calls: gap has to change by this many metres
+    "traffic_s": 1.0,         # race mode: this close behind someone counts as traffic
     "off": [],                # kinds of call switched off
 }
 
@@ -138,7 +139,7 @@ class CrewChief:
                  wide_m: float = 2.5, early_brake_m: float = 12.0, slow_apex_kmh: float = 6.0,
                  min_loss: float = 0.1, max_corner_calls: int = 2, consistency_s: float = 0.35,
                  off: set[str] | None = None, ghost_ref: int | None = None,
-                 ghost_gap_m: float = 5.0, race=None):
+                 ghost_gap_m: float = 5.0, race=None, traffic_s: float = 1.0):
         """ghost_ref: index of the ghost lap when the ghost is on. Corners are then
         judged against the ghost (so the voice and the picture agree), and the
         ghost-gap calls are made."""
@@ -151,6 +152,7 @@ class CrewChief:
         self.consistency_s = consistency_s
         from .race import RACE_KINDS
         self.race = race      # race mode: race calls replace the plain lap-time call
+        self.traffic_s = traffic_s
         self.on = (set(KINDS) | set(RACE_KINDS)) - set(off or ())
         self.laps = timing.laps
         self.corners: list[Corner] = []
@@ -159,6 +161,9 @@ class CrewChief:
             self._profiles = [self._lap_profile(l) for l in self.laps]
             self.L = self._profiles[self.best_i]["s"][-1]
             self.corners = self._find_corners()
+        # race mode: how much of each lap was spent in someone's wake
+        self.traffic = race.clean_laps(traffic_s) if race is not None else [0.0] * len(self.laps)
+        self.clean = [x < 0.15 for x in self.traffic]
 
     @classmethod
     def from_settings(cls, tel: Telemetry, timing: Timing, units: str = "mph",
@@ -170,7 +175,8 @@ class CrewChief:
                    early_brake_m=float(s["early_brake_m"]), slow_apex_kmh=float(s["slow_corner_kmh"]),
                    min_loss=float(s["min_loss"]), max_corner_calls=int(s["max_corner_calls"]),
                    consistency_s=float(s["consistency_s"]), off=set(s["off"] or ()),
-                   ghost_ref=ghost_ref, ghost_gap_m=float(s["ghost_gap_m"]), race=race)
+                   ghost_ref=ghost_ref, ghost_gap_m=float(s["ghost_gap_m"]), race=race,
+                   traffic_s=float(s["traffic_s"]))
 
     # per-lap arrays against distance (metres), normalised to the best lap's length
     def _lap_profile(self, lap) -> dict:
@@ -233,12 +239,14 @@ class CrewChief:
         out: list[Call] = []
         if self.race is not None:
             from .race import race_calls
-            out += race_calls(self.race, self.on, self.units)
+            t1 = (self.corners[0].s0, self.corners[0].s1) if self.corners else None
+            out += race_calls(self.race, self.on, self.units, turn1=t1, traffic_s=self.traffic_s)
         laps = self.laps
         if not laps:
             return sorted(out, key=lambda c: (c.t, c.priority))
         lap_on = "lap" in self.on and self.race is None
         best_so_far = None
+        best_clean = None          # race mode: best lap so far in clean air
         best_sectors: list[float] | None = None
         top = None
         last_theo = None
@@ -264,10 +272,13 @@ class CrewChief:
 
             # ---- corners, against the ghost when it's on, else the best lap so far
             ghosted = self.ghost_ref is not None and k != self.ghost_ref
-            ref_i = self.ghost_ref if ghosted else (laps.index(best_so_far) if best_so_far else None)
+            ref_lap = best_clean if (self.race is not None and best_clean is not None) else best_so_far
+            ref_i = self.ghost_ref if ghosted else (laps.index(ref_lap) if ref_lap else None)
             mistakes = []
             if self.corners and ref_i is not None and ref_i != k and ({"corner", "good"} & self.on):
                 mistakes = self._corner_calls(k, ref_i, grids)
+                if self.race is not None:
+                    mistakes = self._traffic_filter(mistakes)
                 out += mistakes
             if ghosted and "ghost" in self.on and grids:
                 out += self._ghost_calls(k, grids, {c.corner for c in mistakes})
@@ -302,6 +313,8 @@ class CrewChief:
                     [min(a, b) for a, b in zip(best_sectors, secs)]
             if best_so_far is None or lap.time < best_so_far.time:
                 best_so_far = lap
+            if self.clean[k] and (best_clean is None or lap.time < best_clean.time):
+                best_clean = lap
             if best_sectors and k > 0 and "theoretical" in self.on:
                 theo = sum(best_sectors)
                 if theo < best_so_far.time - 0.15 and (last_theo is None or theo < last_theo - 0.05):
@@ -333,6 +346,21 @@ class CrewChief:
             elif streak < 3:
                 streak_said = 0
         return sorted(out, key=lambda c: (c.t, c.priority))
+
+    def _traffic_filter(self, calls: list[Call]) -> list[Call]:
+        """Race mode: a slow corner while right behind someone is being held up,
+        not a mistake. Said once per lap."""
+        out, said = [], False
+        for c in calls:
+            tr = self.race.traffic(c.t - 1.5) if c.priority == 2 else None
+            if tr and tr[1] <= self.traffic_s:
+                if said:
+                    continue
+                who = self.race.rider(tr[0]).last_name
+                c.text = f"Held up behind {who} in turn {words(c.corner)}."
+                said = True
+            out.append(c)
+        return out
 
     # ------------------------------------------------------------ ghost
 

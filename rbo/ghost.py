@@ -20,14 +20,19 @@ import numpy as np
 from .timing import Timing
 
 
-def choose_ref(timing: Timing, offset: float, duration: float) -> int | None:
-    """The fastest lap that's entirely inside the video (its footage is needed)."""
-    best = None
-    for i, lap in enumerate(timing.laps):
-        v0, v1 = lap.t_start - offset, lap.t_end - offset
-        if v0 >= 0 and v1 <= duration and (best is None or lap.time < timing.laps[best].time):
-            best = i
-    return best
+def choose_ref(timing: Timing, offset: float, duration: float, avoid=None) -> int | None:
+    """The fastest lap that's entirely inside the video (its footage is needed).
+    avoid: lap indexes to skip if any other lap qualifies (race mode: laps
+    spent in traffic)."""
+    def pick(skip):
+        best = None
+        for i, lap in enumerate(timing.laps):
+            v0, v1 = lap.t_start - offset, lap.t_end - offset
+            if i not in skip and v0 >= 0 and v1 <= duration and \
+                    (best is None or lap.time < timing.laps[best].time):
+                best = i
+        return best
+    return pick(set(avoid or ())) if pick(set(avoid or ())) is not None else pick(set())
 
 
 @dataclass

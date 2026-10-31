@@ -235,7 +235,8 @@ def _setup(args):
     ghost_cfg = None
     if args.ghost:
         from .ghost import choose_ref
-        ref = choose_ref(tm, offset, vinfo["duration"])
+        ref = choose_ref(tm, offset, vinfo["duration"],
+                         avoid=race.traffic_laps(_traffic_s(args)) if race is not None else None)
         if ref is None:
             print("ghost: no complete lap in this video to use as the ghost, so it's off")
         else:
@@ -307,11 +308,17 @@ def call_settings(args) -> dict:
     return s
 
 
+def _traffic_s(args) -> float:
+    return float(call_settings(args).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
+
+
 def chief(args, tel, tm, offset: float | None = None, duration: float | None = None):
     ghost_ref = None
     if getattr(args, "ghost", None) and offset is not None and duration is not None:
         from .ghost import choose_ref
-        ghost_ref = choose_ref(tm, offset, duration)
+        r_ = getattr(args, "_race", None)
+        ghost_ref = choose_ref(tm, offset, duration,
+                               avoid=r_.traffic_laps(_traffic_s(args)) if r_ is not None else None)
     race = getattr(args, "_race", None)
     if race is None and getattr(args, "race", None):
         race = args._race = load_race(args, tel, tm)
@@ -388,17 +395,22 @@ def cmd_race(args):
     tel, tm = load_session(args)
     args.video, args.race = None, True
     args.race_source, args.race_number, args.units = args.source, args.number, args.units or "mph"
-    r = load_race(args, tel, tm, quiet=True)
+    r = args._race = load_race(args, tel, tm, quiet=True)
     print(r.summary())
     print("\n  running order after each of your laps:")
     for i, c in enumerate(r.me.cross):
         order = r.order_at(c + 0.05)
         print(f"  lap {i + 1}: " + " ".join(("[" + n + "]") if n == r.me.number else n for n in order))
     args.call_settings, args.ghost = {}, None
+    print("\n  your RaceBox laps, clean air or traffic (within 1 s of a rider ahead):")
+    for l, share in zip(tm.laps, r.clean_laps(1.0)):
+        who = r.lap_traffic(l.t_start, l.t_end, 1.0)[1]
+        tag = "clean air" if share < 0.15 else f"traffic {share * 100:.0f}%" + (f", behind #{who}" if who else "")
+        print(f"  lap {l.number}: {fmt_time(l.time)}  {tag}")
     print("\n  race calls (time into the RaceBox session):")
-    from .race import race_calls
-    for c in race_calls(r, units=args.units):
-        print(f"  {clock(c.t - tel.t[0]):>10}  {c.text}")
+    for c in chief(args, tel, tm).calls():
+        if c.kind.startswith("race") or "Held up" in c.text:
+            print(f"  {clock(c.t - tel.t[0]):>10}  {c.text}")
 
 
 def cmd_render(args):

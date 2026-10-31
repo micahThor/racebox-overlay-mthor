@@ -158,6 +158,8 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 .calls .k { color: var(--muted); font-size: 12px; display: block; }
 .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 14px; }
 .kinds label { display: flex; gap: 8px; align-items: center; }
+.tag { font-size: 11px; margin-left: 6px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+.tag.clean { color: #6fd39a; border-color: #2f6b49; }
 .sens { padding: 8px 0; border-top: 1px solid var(--line); }
 .sens .top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
 .sens .val { color: var(--muted); font-family: var(--num); font-size: 15px; text-align: right; }
@@ -457,7 +459,7 @@ async function save(changes) {
     if (r.race) S.race = r.race;
     const raceCh = ["race", "race_source", "race_number", "race_class", "race_field"].some(k => k in changes);
     if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || raceCh) renderLook(); }
-    if (raceCh) renderRace();
+    if (raceCh || "call_settings" in changes) { renderRace(); renderLapTable(); }
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
     $("#saved").classList.add("ok");
   } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
@@ -719,6 +721,8 @@ function sensDefs() {
       show: v => +v === 0 ? "none" : `up to ${v}` },
     { key: "consistency_s", label: "Consistent laps", min: 0.1, max: 1, step: 0.05,
       show: v => `3+ laps within ${(+v).toFixed(2)} s` },
+    { key: "traffic_s", label: "Race: counts as traffic", min: 0.3, max: 2, step: 0.1,
+      show: v => `within ${(+v).toFixed(1)} s of the rider ahead` },
     { key: "ghost_gap_m", label: "Ghost gap updates", min: 2, max: 20, step: 1,
       show: v => `when it changes ${v} m` },
   ];
@@ -759,6 +763,19 @@ $("#ccSwitch").addEventListener("click", () => { save({ crew_chief: !P.crew_chie
 $("#ccVoice").addEventListener("change", e => save({ voice: e.target.value }));
 $("#ccRate").addEventListener("input", e => $("#ccRateV").textContent = e.target.value + " wpm");
 $("#ccRate").addEventListener("change", e => save({ voice_rate: +e.target.value }));
+
+function renderLapTable() {
+  const tr_ = P.race && S.race && S.race.loaded ? S.race.lap_traffic : null;
+  $("#lapTable").innerHTML = S.data.laps.map((l, i) => {
+    const tag = !tr_ ? "" : tr_[i] < 0.15 ? '<span class="tag clean">clean air</span>'
+      : `<span class="tag traffic">traffic ${Math.round(tr_[i] * 100)}%</span>`;
+    return `<tr data-lap="${l.n}" class="${l.n === S.data.best ? "best" : ""}"><td>Lap ${l.n}${tag}</td>
+     <td>${l.sectors ? l.sectors.join("  ") : ""}</td><td>${l.time_str}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("#lapTable tr").forEach(tr => tr.addEventListener("click", () => {
+    const l = S.data.laps.find(x => x.n === +tr.dataset.lap); seek(Math.max(l.start - P.offset, 0));
+  }));
+}
 
 /* ---------- race mode ---------- */
 function renderRace() {
@@ -848,12 +865,7 @@ function showRender(st) {
     : "Matches sideways motion in the video against the RaceBox yaw rate.";
   $("#lapSel").innerHTML = S.data.laps.map(l => `<option value="${l.n}">Lap ${l.n}</option>`).join("");
   if (S.data.laps.length > 1) $("#lapSel").value = 2;
-  $("#lapTable").innerHTML = S.data.laps.map(l =>
-    `<tr data-lap="${l.n}" class="${l.n === S.data.best ? "best" : ""}"><td>Lap ${l.n}</td>
-     <td>${l.sectors ? l.sectors.join("  ") : ""}</td><td>${l.time_str}</td></tr>`).join("");
-  document.querySelectorAll("#lapTable tr").forEach(tr => tr.addEventListener("click", () => {
-    const l = S.data.laps.find(x => x.n === +tr.dataset.lap); seek(Math.max(l.start - P.offset, 0));
-  }));
+  renderLapTable();
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
   renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls();
   showRender(await api("/api/render"));

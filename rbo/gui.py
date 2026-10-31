@@ -82,7 +82,7 @@ class Studio:
             return None
         from .ghost import choose_ref
         off = self.t0 + float(self.proj["offset"])
-        ref = choose_ref(self.tm, off, self.vinfo["duration"])
+        ref = choose_ref(self.tm, off, self.vinfo["duration"], avoid=self._avoid())
         return None if ref is None else {"ref": ref, "offset": off, "duration": self.vinfo["duration"]}
 
     def _race_key(self):
@@ -112,6 +112,13 @@ class Studio:
         self._race_k = key
         return self._race
 
+    def _traffic_s(self) -> float:
+        return float((self.proj.get("call_settings") or {}).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
+
+    def _avoid(self):
+        r = self.race()
+        return r.traffic_laps(self._traffic_s()) if r is not None else None
+
     def race_info(self) -> dict:
         r = self.race()
         data = getattr(self, "_race_data", None)
@@ -126,11 +133,12 @@ class Studio:
                            "grid": r.me.grid, "finish": r.me.finish_pos},
                        laps=r.total_laps, aligned=r.aligned_laps, align_error=round(r.align_error, 3),
                        summary=r.summary().splitlines(),
-                       start_vt=r.start - self.t0 - float(self.proj["offset"]))
+                       start_vt=r.start - self.t0 - float(self.proj["offset"]),
+                       lap_traffic=[round(x, 2) for x in r.clean_laps(self._traffic_s())])
         return out
 
     def hud(self, width: int, height: int) -> Hud:
-        key = json.dumps([width, height, self.proj.get("theme"), self.proj.get("units"),
+        key = json.dumps([width, height, self._traffic_s(), self.proj.get("theme"), self.proj.get("units"),
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self.ghost_cfg(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True)],
@@ -219,7 +227,8 @@ class Studio:
 
     def _ghost_ref(self) -> dict | None:
         from .ghost import choose_ref
-        ref = choose_ref(self.tm, self.t0 + float(self.proj["offset"]), self.vinfo["duration"])
+        ref = choose_ref(self.tm, self.t0 + float(self.proj["offset"]), self.vinfo["duration"],
+                         avoid=self._avoid())
         if ref is None:
             return None
         lap = self.tm.laps[ref]

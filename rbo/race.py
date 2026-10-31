@@ -158,6 +158,7 @@ class Race:
             r.cross = r.raw + self.offset
         self.start = self._race_start()
         self._shape = self._lap_shape()
+        self._start_shape = self._first_lap_shape()
         self._timeline()
 
     def rider(self, number: str) -> Rider | None:
@@ -203,6 +204,24 @@ class Race:
         el, d = self.tm._lap_profiles[k]
         return el / el[-1], d / max(d[-1], 1e-6)
 
+    def _first_lap_shape(self):
+        """Same, for the opening lap from a standing start, from my own first lap
+        (falls back to the flying-lap shape if the RaceBox missed it)."""
+        me = self.me
+        lt = me.lap_times[0]
+        if not np.isfinite(lt):
+            return self._shape
+        a, b = max(me.cross[0] - lt, self.start), me.cross[0]
+        t = self.tel.t
+        if t[0] > a or t[-1] < b or b - a < 10:
+            return self._shape
+        tt = np.linspace(a, b, 400)
+        d = np.interp(tt, t, self.tm.dist)
+        d = d - d[0]
+        if d[-1] <= 0:
+            return self._shape
+        return (tt - a) / (b - a), np.maximum.accumulate(d / d[-1])
+
     # ------------------------------------------------------------ progress and order
 
     def progress(self, r: Rider, t: float) -> float:
@@ -224,14 +243,15 @@ class Race:
             frac = (d - d0) / max(d1 - d0, 1e-6)
         else:
             tau = (t - prev) / max(nxt - prev, 1e-6)
-            frac = float(np.interp(tau, *self._shape))
+            frac = float(np.interp(tau, *(self._start_shape if n == 0 else self._shape)))
         return n + min(max(frac, 0.0), 0.999)
 
     def _key(self, r: Rider, t: float):
         n = int(np.searchsorted(r.cross, t, side="right"))
+        g = -float(r.grid or 99)                   # ties (still on the grid): grid order
         if n >= len(r.cross):                      # finished: laps, then who finished first
-            return (float(len(r.cross)), -float(r.cross[-1]))
-        return (self.progress(r, t), 0.0)
+            return (float(len(r.cross)), -float(r.cross[-1]), g)
+        return (self.progress(r, t), 0.0, g)
 
     def raw_order(self, t: float) -> list[Rider]:
         if t < self.start:
@@ -384,6 +404,68 @@ class Race:
             out.append((r.number, pr - math.floor(pr)))
         return out
 
+    # ------------------------------------------------------------ traffic
+
+    def traffic(self, t: float) -> tuple[str, float] | None:
+        """The rider right in front of me on track (any lap) and how many seconds
+        ahead, or None in clean air (nobody within a quarter of a lap)."""
+        if t < self.start or t >= self.me.cross[-1]:
+            return None
+        pm = self.progress(self.me, t)
+        fm = pm - math.floor(pm)
+        lap = float(np.nanmedian(self.me.lap_times[1:] or self.me.lap_times))
+        best = None
+        for r in self.riders:
+            if r is self.me or t >= r.cross[-1]:
+                continue
+            pr = self.progress(r, t)
+            if pr <= 0:
+                continue
+            df = (pr - math.floor(pr) - fm) % 1.0
+            if df < 0.25 and (best is None or df < best[1]):
+                best = (r.number, df)
+        return (best[0], best[1] * lap) if best else None
+
+    def lap_traffic(self, t0: float, t1: float, within: float = 1.0) -> tuple[float, str | None]:
+        """Share of t0..t1 spent within `within` seconds of a rider ahead, and
+        who it mostly was."""
+        ts = np.arange(t0, t1, 0.5)
+        if not len(ts):
+            return 0.0, None
+        who = {}
+        n = 0
+        for t in ts:
+            tr = self.traffic(float(t))
+            if tr and tr[1] <= within:
+                n += 1
+                who[tr[0]] = who.get(tr[0], 0) + 1
+        return n / len(ts), (max(who, key=who.get) if who else None)
+
+    def launch(self) -> float:
+        """When I got moving off the grid, from the RaceBox (else the race start)."""
+        t, v = self.tel.t, self.tel.speed_kmh
+        lt = self.me.lap_times[0]
+        a = self.me.cross[0] - (lt if np.isfinite(lt) else 0)
+        m = (t >= self.start - 15) & (t <= a + 2)
+        idx = np.flatnonzero(m)
+        if not len(idx):
+            return self.start
+        still = idx[v[idx] < 4]
+        if not len(still):
+            return self.start
+        return float(t[still[-1]])
+
+    def clean_laps(self, within: float = 1.0) -> list[float]:
+        """For each RaceBox lap, the share of it spent in someone's wake."""
+        memo = self.__dict__.setdefault("_clean_memo", {})
+        if within not in memo:
+            memo[within] = [self.lap_traffic(l.t_start, l.t_end, within)[0] for l in self.tm.laps]
+        return memo[within]
+
+    def traffic_laps(self, within: float = 1.0) -> set[int]:
+        """RaceBox lap indexes that weren't in clean air."""
+        return {i for i, x in enumerate(self.clean_laps(within)) if x >= 0.15}
+
     def laps_down(self, r: Rider, t: float) -> int:
         lead = self.rider(self.order_at(t)[0])
         if t < self.start or lead is r:
@@ -414,8 +496,23 @@ RACE_KINDS = {
 }
 
 
-def race_calls(race: Race, on: set[str] | None = None, units: str = "mph") -> list:
-    """Spoken race calls: the line, passes, the start, gaps, the flag."""
+def turn_one_times(race: Race, turn1: tuple[float, float] | None) -> tuple[float, float]:
+    """When I reach the entry and the exit of the first corner on the opening lap.
+    turn1: (entry, exit) in metres from the line, from the crew chief's corners."""
+    me, tel, dist = race.me, race.tel, race.tm.dist
+    lt = me.lap_times[0]
+    a = max(me.cross[0] - lt, race.start) if np.isfinite(lt) else race.start
+    if turn1 is None or not (tel.t[0] <= a <= tel.t[-1]):
+        return race.start + 8.0, race.start + 14.0
+    d0 = float(np.interp(a, tel.t, dist))
+    te, tx = np.interp([d0 + turn1[0], d0 + turn1[1]], dist, tel.t)
+    return float(max(te, race.start + 3.0)), float(max(tx, te + 2.0))
+
+
+def race_calls(race: Race, on: set[str] | None = None, units: str = "mph",
+               turn1: tuple[float, float] | None = None, traffic_s: float = 1.0) -> list:
+    """Spoken race calls: the start and turn one, the line, passes, gaps, traffic,
+    the flag. turn1: (entry, exit) of the first corner, metres from the line."""
     from .crewchief import Call, say_gap, say_laptime, words
 
     on = set(RACE_KINDS) if on is None else on
@@ -427,26 +524,49 @@ def race_calls(race: Race, on: set[str] | None = None, units: str = "mph") -> li
     laps_me = len(me.cross)
     ev = race.events
 
-    # the start: places made or lost by the end of the opening seconds
+    # the start, called before turn one, then where I am once through it
+    te, tx = turn_one_times(race, turn1)
+    t_out = tx + 0.4
     if "racepos" in on and me.grid:
-        t = race.start + 12
-        p = race.pos(me.number, t)
-        d = me.grid - p
-        if d > 0:
-            txt = f"Great start, up {words(d)}, {P(p)}." if d > 1 else f"Good start, up one, {P(p)}."
-        elif d < 0:
-            txt = f"Lost {words(-d)} off the start, {P(p)}. Plenty of time."
+        grid = race.order_at(race.start - 0.1)
+        ta = max(race.launch() + 1.5, te - 3.5)
+        now = race.order_at(ta)
+        mine = lambda order: order.index(me.number)
+        passed = [n for n in grid[:mine(grid)] if now.index(n) > mine(now)]
+        lost = [n for n in grid[mine(grid) + 1:] if now.index(n) < mine(now)]
+        p = mine(now) + 1
+        if passed and lost:
+            txt = f"Past {joined(passed)}, but {joined(lost)} got you."
+        elif passed:
+            txt = f"Great launch, past {joined(passed)}." if len(passed) > 1 else f"Good launch, past {joined(passed)}."
+        elif lost:
+            txt = f"{joined(lost)} got you off the line."
         else:
-            txt = f"Clean start, holding {P(p)}."
-        out.append(Call(t, txt, "racepos", 2))
+            txt = "Clean launch."
+        out.append(Call(ta, f"{txt} {P(p)} into turn one.", "racepos", 1))
+        after = race.order_at(t_out)
+        got = [n for n in now[:mine(now)] if after.index(n) > mine(after)]
+        gone = [n for n in now[mine(now) + 1:] if after.index(n) < mine(after)]
+        p2 = mine(after) + 1
+        bits = []
+        if got:
+            bits.append(f"Got {joined(got)} into turn one.")
+        if gone:
+            bits.append(f"{joined(gone)} {'is' if len(gone) == 1 else 'are'} through at turn one.")
+        bits.append(f"{P(p2)} out of turn one." if bits else f"Through turn one, {P(p2)}.")
+        d = me.grid - p2
+        if d:
+            bits.append(f"{'Up' if d > 0 else 'Down'} {words(abs(d))} from the grid.")
+        out.append(Call(t_out, " ".join(bits), "racepos", 1))
 
     best = None
+    stuck_on = None
     prev_ahead = None             # (number, gap) at the previous crossing
     for e in ev:
         d = e.data
-        if e.kind == "gain" and "racepos" in on and e.t > race.start + 12:
+        if e.kind == "gain" and "racepos" in on and e.t > t_out + 0.5:
             out.append(Call(e.t + 0.3, f"You're past {joined(d['passed'])}. {P(d['pos'])}.", "racepos", 1))
-        elif e.kind == "lose" and "racepos" in on and e.t > race.start + 12:
+        elif e.kind == "lose" and "racepos" in on and e.t > t_out + 0.5:
             who = joined(d["by"])
             out.append(Call(e.t + 0.3, f"{who} {'is' if len(d['by']) == 1 else 'are'} through. "
                                        f"{P(d['pos'])}.", "racepos", 1))
@@ -489,11 +609,23 @@ def race_calls(race: Race, on: set[str] | None = None, units: str = "mph") -> li
                 if "racegap" in on:
                     a, ag = d.get("ahead"), d.get("ahead_gap")
                     b, bg = d.get("behind"), d.get("behind_gap")
+                    t_prev = me.cross[n - 2] if n >= 2 else race.start
+                    share, who = race.lap_traffic(t_prev, e.t, traffic_s)
+                    trend = ""
+                    if a and ag is not None and prev_ahead and prev_ahead[0] == a:
+                        ch = ag - prev_ahead[1]
+                        trend = ", you're closing" if ch < -0.1 else (", gap growing" if ch > 0.15 else "")
+                    if share > 0.5 and who:
+                        gap_txt = f", {say_gap(ag)}{trend}" if who == a and ag is not None else ""
+                        if stuck_on == who:
+                            parts.append(f"Still behind {name(who)}{gap_txt}.")
+                        else:
+                            parts.append(f"Stuck behind {name(who)} most of that lap{gap_txt}.")
+                        stuck_on = who
+                        a = None if who == a else a
+                    else:
+                        stuck_on = None
                     if a and ag is not None and ag < 2.0:
-                        trend = ""
-                        if prev_ahead and prev_ahead[0] == a:
-                            ch = ag - prev_ahead[1]
-                            trend = " and closing" if ch < -0.1 else (" and pulling away" if ch > 0.15 else "")
                         parts.append(f"{name(a)} {say_gap(ag)} ahead{trend}.")
                     if b and bg is not None and bg < 1.0:
                         parts.append(f"{name(b)} right behind, {say_gap(bg)}.")

@@ -260,13 +260,30 @@ pick your number. Settings save with the video, so after that `--race` or
   Positions between timing-line crossings are estimates (see below). Turn it
   off with `--no-race-field` or the checkbox in the Race tab.
 - **Race calls** (with the crew chief radio on; they replace the plain lap
-  call): how the start went against your grid slot; at the line, lap time,
-  position and laps to go, "Last lap!", your best lap, fastest lap of the
-  race; "You're past Eifert. P nine." and "Eifert is through. P ten."; the
-  gap to the rider ahead (closing or pulling away) and to anyone right
-  behind; blue flags before the leader laps you; and at the flag, your
-  overall and class finish and places made from the grid. Each group can be
-  switched off (`--calls-off raceline,racepos,racegap`).
+  call):
+  - **The start**, said before turn one: who you got or who got you off the
+    line and your position into turn one ("Good launch, past Eifert. P nine
+    into turn one."). Then, once through it: "Got Demboske into turn one. P
+    eight out of turn one. Up two from the grid."
+  - **At the line:** lap time, position and laps to go, "Last lap!", your
+    best lap, fastest lap of the race.
+  - **Passes:** "You're past Eifert. P nine." and "Eifert is through. P ten."
+  - **Gaps:** to the rider ahead (closing or growing) and to anyone right
+    behind; blue flags before the leader laps you.
+  - **The flag:** your overall and class finish and places made from the grid.
+  Each group can be switched off (`--calls-off raceline,racepos,racegap`).
+- **Traffic awareness:** a lap where you spent time within a second of the
+  rider ahead (any rider on track, lapped or not) is a traffic lap.
+  - A slow or wide corner while you're right behind someone is called as
+    "Held up behind Eifert in turn three", not a mistake.
+  - The line call says "Stuck behind Eifert most of that lap" (then "Still
+    behind Eifert, four tenths, you're closing").
+  - Corner comparisons and the ghost lap use your best **clean-air** lap,
+    so you're not compared with a lap you spent in someone's wake (if every
+    lap was in traffic, the best lap is used).
+  - The editor's lap table and `racebox-overlay race` mark each lap as clean
+    air or traffic. How close counts as traffic is a slider in the Crew chief
+    tab (default 1 second).
 
 How it works: Speedhive records when every rider crosses the timing line.
 Your own crossings are the same moments as your RaceBox laps, so the race
