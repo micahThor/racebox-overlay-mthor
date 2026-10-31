@@ -211,6 +211,14 @@ def cmd_info(args):
           f"{clock(tel.duration)} long, starts {start}")
     if meta:
         print(f"  {meta}")
+    if tel.meta.get("speed_units_fixed"):
+        print(f"  NOTE: the speed column was in {tel.meta['speed_units_fixed']}, not km/h (checked against "
+              "the GPS track); converted")
+    elif tel.meta.get("speed_check") and abs(float(tel.meta["speed_check"]) - 1) > 0.15:
+        print(f"  NOTE: the speed column reads {float(tel.meta['speed_check']):.2f}x the speed from the GPS "
+              "track; it may be in odd units")
+    vmax = float(np.max(tel.speed_kmh))
+    print(f"  top speed {vmax * 0.621371:.0f} mph ({vmax:.0f} km/h)")
     chans = [n for n in ("alt", "g_long", "g_lat", "lean_deg", "yaw_rate", "lap") if getattr(tel, n) is not None]
     print(f"  channels: speed, position, {', '.join(chans)}{'  (bike mode)' if tel.is_bike else ''}")
     if tm.auto_line:

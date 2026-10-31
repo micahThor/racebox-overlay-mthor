@@ -284,6 +284,32 @@ def enu(lat, lon, lat0, lon0):
     return x, y
 
 
+_UNITS = {"km/h": 1.0, "mph": 1 / 1.609344, "m/s": 1 / 3.6, "knots": 1 / 1.852}
+
+
+def _check_speed_units(tel: Telemetry) -> None:
+    """The speed column should agree with how fast the GPS position moves. If
+    it's consistently off by a unit conversion (an export in mph or m/s with
+    no unit in the header), convert it, and note it in meta."""
+    if len(tel.t) < 100:
+        return
+    x, y = enu(tel.lat, tel.lon, tel.lat.mean(), tel.lon.mean())
+    k = max(3, int(round(1.0 / max(float(np.median(np.diff(tel.t))), 1e-3))) | 1)   # ~1 s
+    x = np.convolve(x, np.ones(k) / k, mode="same")
+    y = np.convolve(y, np.ones(k) / k, mode="same")
+    gps = np.hypot(np.gradient(x), np.gradient(y)) / np.maximum(np.gradient(tel.t), 1e-3) * 3.6
+    m = (gps > 25) & (tel.speed_kmh > 1)
+    m[: k] = m[-k:] = False
+    if m.sum() < 50:
+        return
+    ratio = float(np.median(tel.speed_kmh[m] / gps[m]))
+    tel.meta["speed_check"] = f"{ratio:.2f}"
+    unit, f = min(_UNITS.items(), key=lambda kv: abs(np.log(ratio / kv[1])))
+    if unit != "km/h" and abs(np.log(ratio / f)) < 0.12:
+        tel.speed_kmh = tel.speed_kmh / f
+        tel.meta["speed_units_fixed"] = unit
+
+
 def _finish(tel: Telemetry) -> Telemetry:
     # drop no-fix rows, sort, de-duplicate timestamps
     ok = np.isfinite(tel.lat) & np.isfinite(tel.lon) & ~((tel.lat == 0) & (tel.lon == 0))
@@ -302,6 +328,7 @@ def _finish(tel: Telemetry) -> Telemetry:
             setattr(tel, name, arr)
     if len(tel.t) < 10:
         raise ValueError(f"{tel.source}: fewer than 10 usable GPS samples")
+    _check_speed_units(tel)
     _orient_axes(tel)
     return tel
 
