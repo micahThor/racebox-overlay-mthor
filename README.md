@@ -32,6 +32,7 @@ gauges and curves stay smooth even in 4K.
 brew install ffmpeg python
 cd racebox-overlay
 python3 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip
 pip install -e .
 ```
 
