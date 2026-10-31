@@ -222,6 +222,45 @@ class StyleMixin:
         self.stamp(img, self.glow(self.C["accent"], 15), px, py, p)
         self.stamp(img, self._bike_icon(facing), px, py, p)
 
+    def you_ring(self, d, x, y):
+        """Ring around your own marker so you stand out from the field."""
+        S, kind = self.S, self.theme.get("marker", "bike")
+        col, sc = self.C["accent"], self.C["stroke_color"]
+        r, w = S(25), max(2, S(3))
+        if kind == "target":
+            self.brackets(d, x - r, y - r, x + r, y + r, col, L=S(9), w=w)
+        elif kind == "sprite":
+            d.rectangle([x - r, y - r, x + r, y + r], outline=col, width=w)
+        else:
+            d.ellipse([x - r - S(1.5), y - r - S(1.5), x + r + S(1.5), y + r + S(1.5)],
+                      outline=(0, 0, 0, 120) if not self.light() else self.C["edge"], width=w + S(3))
+            d.ellipse([x - r, y - r, x + r, y + r], outline=col, width=w)
+
+    def field_dot(self, d, x, y):
+        """Another rider on the map (race mode)."""
+        S, kind = self.S, self.theme.get("marker", "bike")
+        if kind == "target":                     # HUD: small open diamonds
+            r, w = S(6), max(1, S(2))
+            dia = [(x, y - r), (x + r, y), (x, y + r), (x - r, y)]
+            d.polygon(dia, outline=self.C["stroke_color"], width=w + S(2))
+            d.polygon(dia, outline=self.C["dim"], width=w)
+        elif kind == "sprite":                   # arcade: pixel blocks
+            q = max(1, S(3.5))
+            d.rectangle([x - q - S(1.5), y - q - S(1.5), x + q + S(1.5), y + q + S(1.5)], fill=(10, 0, 24, 255))
+            d.rectangle([x - q, y - q, x + q, y + q], fill=self.C["dim"])
+        else:
+            r, ring = S(6), max(1, S(2))
+            if kind == "enamel":                 # vintage: ink dots with a brass rim
+                fill, rim = self.C["text"], self.C["ring"]
+            elif kind == "badge":                # broadcast: white dots, dark rim
+                fill, rim = (255, 255, 255, 255), (11, 15, 30, 255)
+            else:
+                fill = self.C["dim"] if self.light() else (225, 230, 238, 255)
+                rim = self.C["bg"] if self._has_card() else (0, 0, 0, 200)
+                rim = tuple(rim[:3]) + (255,)
+            d.ellipse([x - r - ring, y - r - ring, x + r + ring, y + r + ring], fill=rim)
+            d.ellipse([x - r, y - r, x + r, y + r], fill=fill)
+
     # ------------------------------------------------------------ shared bits
 
     def speed_now(self, t):

@@ -315,6 +315,8 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
         <div class="row"><select id="rcRider" aria-label="Your rider" style="flex:1"></select></div>
         <label class="row" style="margin-top:10px;gap:8px"><input type="checkbox" id="rcClass">
           Standings show only my class</label>
+        <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="rcField">
+          Show the other riders on the map</label>
         <div class="result" id="rcInfo"></div>
         <h2>Race calls</h2>
         <div class="kinds" id="rcKinds"></div>
@@ -453,7 +455,7 @@ async function save(changes) {
     P.offset = r.offset;
     if (r.ghost_ref !== undefined) S.ghost_ref = r.ghost_ref;
     if (r.race) S.race = r.race;
-    const raceCh = ["race", "race_source", "race_number", "race_class"].some(k => k in changes);
+    const raceCh = ["race", "race_source", "race_number", "race_class", "race_field"].some(k => k in changes);
     if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || raceCh) renderLook(); }
     if (raceCh) renderRace();
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
@@ -773,6 +775,7 @@ function renderRace() {
   sel.disabled = !R.riders.length;
   sel.value = P.race_number || "";
   $("#rcClass").checked = !!P.race_class;
+  $("#rcField").checked = P.race_field !== false;
   const info = $("#rcInfo");
   if (R.loaded) {
     const ok = R.aligned >= 2;
@@ -803,6 +806,7 @@ $("#rcLoad").addEventListener("click", () => saveRace({ race_source: $("#rcSrc")
 $("#rcSrc").addEventListener("keydown", e => { if (e.key === "Enter") $("#rcLoad").click(); });
 $("#rcRider").addEventListener("change", e => saveRace({ race_number: e.target.value || null }));
 $("#rcClass").addEventListener("change", e => save({ race_class: e.target.checked }));
+$("#rcField").addEventListener("change", e => save({ race_field: e.target.checked }));
 
 /* ---------- render ---------- */
 let polling = null;

@@ -133,7 +133,8 @@ class Studio:
         key = json.dumps([width, height, self.proj.get("theme"), self.proj.get("units"),
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self.ghost_cfg(), self._race_key(),
-                          bool(self.proj.get("race_class"))], sort_keys=True)
+                          bool(self.proj.get("race_class")), self.proj.get("race_field", True)],
+                         sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
             if h is None:
@@ -143,7 +144,8 @@ class Studio:
                         scale=float(self.proj.get("scale") or 1.0), theme=self.proj.get("theme"),
                         layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"),
                         ghost=self.ghost_cfg(), race=self.race(),
-                        race_class=bool(self.proj.get("race_class")))
+                        race_class=bool(self.proj.get("race_class")),
+                        race_field=self.proj.get("race_field", True) is not False)
                 self._huds[key] = h
             return h
 
@@ -275,7 +277,7 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost",
-                   "race", "race_source", "race_number", "race_class"}
+                   "race", "race_source", "race_number", "race_class", "race_field"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -320,7 +322,8 @@ class Studio:
                         units=self.proj.get("units") or "mph", scale=float(self.proj.get("scale") or 1),
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
                         speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
-                        race=self.race(), race_class=bool(self.proj.get("race_class")))
+                        race=self.race(), race_class=bool(self.proj.get("race_class")),
+                        race_field=self.proj.get("race_field", True) is not False)
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")

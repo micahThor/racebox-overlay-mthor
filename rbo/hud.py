@@ -128,14 +128,15 @@ class Hud(StyleMixin):
                  hide: set[str] | None = None, theme: str | dict | None = None,
                  layout: dict | None = None, speed_max: float | None = None,
                  supersample: int = 2, ghost: dict | None = None, race=None,
-                 race_class: bool = False):
+                 race_class: bool = False, race_field: bool = True):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
         self.spec = dict(tel=tel, timing=timing, width=width, height=height, units=units,
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
-                         race_class=race_class)
+                         race_class=race_class, race_field=race_field)
+        self.race_field = bool(race_field)
         # race: an rbo.race.Race for the standings tower; race_class: only your class
         self.race = race
         self.race_cls = race.me.cls if race is not None and race_class else None
@@ -398,6 +399,8 @@ class Hud(StyleMixin):
             best = min(laps, key=lambda l: l.time)
             m = (self.tel.t >= best.t_start) & (self.tel.t <= best.t_end)
             line = list(zip(*self._map_xform(x[m], y[m])))
+            dd = self.timing.dist[m] - self.timing.dist[m][0]           # for placing the field
+            self._lap_path = (dd / max(dd[-1], 1e-6), x[m], y[m])
             if self.theme.get("map_glow", True):        # soft glow under the racing line
                 layer = Image.new("RGBA", img.size, tuple(self.C["line"][:3]) + (0,))
                 ImageDraw.Draw(layer).line(line, fill=tuple(self.C["line"][:3]) + (110,),
@@ -784,6 +787,12 @@ class Hud(StyleMixin):
             heading = getattr(self, "_heading", None)
         else:
             self._heading = heading
+        if self.race is not None and self.race_field and getattr(self, "_lap_path", None) is not None:
+            fr, bx, by = self._lap_path
+            for num, f in self.race.field(t, self.race_cls):
+                fx, fy = self._map_xform(float(np.interp(f, fr, bx)), float(np.interp(f, fr, by)))
+                self.field_dot(d, fx, fy)
+            self.you_ring(d, px, py)
         self.draw_marker(img, d, p, px, py, heading, getattr(self, "_facing", True))
 
     def _draw_speed(self, img, d, p, t, st):

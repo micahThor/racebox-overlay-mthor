@@ -18,6 +18,7 @@ video so it only has to be downloaded once.
 from __future__ import annotations
 
 import json
+import math
 import re
 import urllib.request
 from dataclasses import dataclass, field
@@ -366,6 +367,22 @@ class Race:
                 "of": len(order), "lap": min(me_done + 1, self.total_laps), "laps": self.total_laps,
                 "finished": me_done >= len(self.me.cross), "started": t >= self.start,
                 "final_lap": me_done == self.total_laps - 1}
+
+    def field(self, t: float, cls: str | None = None) -> list[tuple[str, float]]:
+        """(number, fraction of the lap from the line) for every other rider
+        still racing at time t, for dots on the map. Estimated between line
+        crossings, like the running order."""
+        if t < self.start:
+            return []
+        out = []
+        for r in self.riders:
+            if r is self.me or (cls and r.cls != cls) or t >= r.cross[-1]:
+                continue
+            if r.cross[0] - (r.lap_times[0] if np.isfinite(r.lap_times[0]) else 0) > t:
+                continue                       # not out on track yet
+            pr = self.progress(r, t)
+            out.append((r.number, pr - math.floor(pr)))
+        return out
 
     def laps_down(self, r: Rider, t: float) -> int:
         lead = self.rider(self.order_at(t)[0])

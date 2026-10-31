@@ -254,6 +254,10 @@ pick your number. Settings save with the video, so after that `--race` or
   happens, with green/red arrows for a few seconds. `--race-class` (or the
   checkbox) shows only your class. Drag it like any panel. The lap counter
   on the lap timer switches to race laps too.
+- **The field on the map:** every other rider still racing is a dot on the
+  track map, and your own marker gets a highlight ring so you stand out.
+  Positions between timing-line crossings are estimates (see below). Turn it
+  off with `--no-race-field` or the checkbox in the Race tab.
 - **Race calls** (with the crew chief radio on; they replace the plain lap
   call): how the start went against your grid slot; at the line, lap time,
   position and laps to go, "Last lap!", your best lap, fastest lap of the
