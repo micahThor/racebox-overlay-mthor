@@ -167,6 +167,30 @@ ahead or behind the ghost is ("ghost 12 m ahead").
   tab, where the preview plays the ghost live, or with `--ghost`. Move and
   resize it like any other panel.
 
+### A ghost from another session
+
+The ghost can also be any lap from another RaceBox file and its video at the
+same track: your own lap from another day, or a friend's.
+
+- In the editor, choose **Another session** under the ghost switch, paste the
+  RaceBox file's and the video's paths (in Finder, select a file and press
+  Option-Command-C to copy its path), press **Load laps** and pick the lap.
+  Laps are numbered as that RaceBox file numbers them.
+- From the command line:
+  `racebox-overlay render VID.mp4 --ghost --ghost-session other.csv --ghost-video other.mp4 --ghost-lap 4`
+- The other video needs its own sync. If you've opened it in the editor
+  before, that sync is used; otherwise it's auto-synced, and the result is
+  saved. Nudge it with the ghost sync buttons (or `--ghost-offset`) if the
+  ghost's picture doesn't match where its lap is.
+- The other lap is cut at *this* session's start/finish line, so both laps
+  start at the same spot even if the two RaceBoxes put the line a few metres
+  apart. If the lap doesn't follow this track, or it isn't inside its video
+  with that sync, you're told why.
+- The label reads `GHOST · OCT 12 · LAP 4  1:04.88` (the date is left out
+  when it's the same day). The gap, and the crew chief's ghost calls and
+  corner comparisons, work as they do with your own lap. GPS can drift a
+  metre or two between days, so treat small line differences as noise.
+
 ## Crew chief radio
 
 Adds a race engineer on the radio to your video: short spoken calls at the

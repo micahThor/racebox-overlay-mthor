@@ -206,7 +206,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     slot = hud.ghost_slot() if hud.ghost else None
     if slot:
         from .ghost import GhostFeed
-        feed = GhostFeed(video, float(fps), slot[2], slot[3])
+        feed = GhostFeed(hud.ghost.video or video, hud.ghost.fps or float(fps), slot[2], slot[3])
     try:
         for i, buf in enumerate(frames):
             if proc.poll() is not None or (cancel is not None and cancel.is_set()):

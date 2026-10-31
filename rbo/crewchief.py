@@ -138,12 +138,17 @@ class CrewChief:
     def __init__(self, tel: Telemetry, timing: Timing, units: str = "mph",
                  wide_m: float = 2.5, early_brake_m: float = 12.0, slow_apex_kmh: float = 6.0,
                  min_loss: float = 0.1, max_corner_calls: int = 2, consistency_s: float = 0.35,
-                 off: set[str] | None = None, ghost_ref: int | None = None,
+                 off: set[str] | None = None, ghost_ref=None,
                  ghost_gap_m: float = 5.0, race=None, traffic_s: float = 1.0):
-        """ghost_ref: index of the ghost lap when the ghost is on. Corners are then
-        judged against the ghost (so the voice and the picture agree), and the
-        ghost-gap calls are made."""
+        """ghost_ref: the ghost lap when the ghost is on: an index into this
+        session's laps, or a ghost.GhostRef (possibly from another session).
+        Corners are then judged against the ghost (so the voice and the picture
+        agree), and the ghost-gap calls are made."""
         self.tel, self.tm = tel, timing
+        self.ghost = None
+        if ghost_ref is not None and not isinstance(ghost_ref, int):
+            self.ghost = ghost_ref
+            ghost_ref = ghost_ref.index            # None for a lap from another session
         self.ghost_ref, self.ghost_gap_m = ghost_ref, ghost_gap_m
         self.units = units
         self.wide_m, self.early_brake_m = wide_m, early_brake_m
@@ -161,13 +166,18 @@ class CrewChief:
             self._profiles = [self._lap_profile(l) for l in self.laps]
             self.L = self._profiles[self.best_i]["s"][-1]
             self.corners = self._find_corners()
+            if self.ghost is not None and self.ghost.external and self.ghost.profile:
+                self._profiles.append(self.ghost.profile)     # the other session's lap, last
+                self.ghost_ref = len(self._profiles) - 1
+        elif self.ghost is not None and self.ghost.external:
+            self.ghost = None                                  # too few laps to compare
         # race mode: how much of each lap was spent in someone's wake
         self.traffic = race.clean_laps(traffic_s) if race is not None else [0.0] * len(self.laps)
         self.clean = [x < 0.15 for x in self.traffic]
 
     @classmethod
     def from_settings(cls, tel: Telemetry, timing: Timing, units: str = "mph",
-                      settings: dict | None = None, ghost_ref: int | None = None,
+                      settings: dict | None = None, ghost_ref=None,
                       race=None) -> "CrewChief":
         s = dict(DEFAULTS)
         s.update({k: v for k, v in (settings or {}).items() if v is not None})
@@ -369,16 +379,23 @@ class CrewChief:
         you'd both started the lap together."""
         lap = self.laps[k]
         el_k, d_k = self.tm._lap_profiles[k]
-        el_r, d_r = self.tm._lap_profiles[self.ghost_ref]
+        el_r, d_r, _, v_end = self._ghost_lap()
         e = t - lap.t_start
         where = float(np.interp(e, el_k, d_k)) / max(d_k[-1], 1.0) * d_r[-1]
         if e <= el_r[-1]:
             ghost_at = float(np.interp(e, el_r, d_r))
         else:                       # the ghost has finished: keep it going at its finishing speed
-            ref = self.laps[self.ghost_ref]
-            v_end = float(np.interp(ref.t_end, self.tel.t, self.tel.speed_kmh)) / 3.6
             ghost_at = d_r[-1] + (e - el_r[-1]) * v_end
         return ghost_at - where
+
+    def _ghost_lap(self):
+        """(elapsed, metres, lap time, speed at the line in m/s) of the ghost lap."""
+        if self.ghost is not None:
+            g = self.ghost
+            return g.el, g.d, g.time, g.v_end
+        ref = self.laps[self.ghost_ref]
+        el_r, d_r = self.tm._lap_profiles[self.ghost_ref]
+        return el_r, d_r, ref.time, float(np.interp(ref.t_end, self.tel.t, self.tel.speed_kmh)) / 3.6
 
     @staticmethod
     def _metres(m: float) -> str:
@@ -386,9 +403,9 @@ class CrewChief:
         return "one metre" if n == 1 else f"{words(n)} metres"
 
     def _ghost_result(self, k: int) -> str:
-        lap, ref = self.laps[k], self.laps[self.ghost_ref]
-        dt = lap.time - ref.time
-        v = float(np.interp(ref.t_end, self.tel.t, self.tel.speed_kmh)) / 3.6   # speed at the line
+        lap = self.laps[k]
+        _, _, ref_time, v = self._ghost_lap()               # speed at the line
+        dt = lap.time - ref_time
         m = abs(dt) * v
         if m < 1:
             return "Dead level with the ghost at the line."

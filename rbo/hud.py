@@ -127,7 +127,7 @@ class Hud(StyleMixin):
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
                  hide: set[str] | None = None, theme: str | dict | None = None,
                  layout: dict | None = None, speed_max: float | None = None,
-                 supersample: int = 2, ghost: dict | None = None, race=None,
+                 supersample: int = 2, ghost=None, race=None,
                  race_class: bool = False, race_field: bool = True):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
@@ -140,8 +140,13 @@ class Hud(StyleMixin):
         # race: an rbo.race.Race for the standings tower; race_class: only your class
         self.race = race
         self.race_cls = race.me.cls if race is not None and race_class else None
-        # ghost: {"ref": lap index, "offset": s, "duration": s} or None for no ghost panel
-        self.ghost = ghost if ghost and ghost.get("ref") is not None else None
+        # ghost: a ghost.GhostRef (the lap to replay and its video), or None for no ghost panel.
+        # The older {"ref": lap index, "offset": s, "duration": s} form still works.
+        if isinstance(ghost, dict):
+            from .ghost import own_ref
+            ghost = own_ref(timing, ghost["ref"], ghost["offset"], ghost["duration"],
+                            ghost.get("video", ""), ghost.get("fps", 30.0)) if ghost.get("ref") is not None else None
+        self.ghost = ghost
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
@@ -695,7 +700,7 @@ class Hud(StyleMixin):
         g = self.ghost
         if not g:
             return GhostState(False)
-        return ghost_state(self.timing, g["ref"], g["offset"], g["duration"], t)
+        return ghost_state(self.timing, g, t)
 
     def ghost_slot(self) -> tuple[int, int, int, int] | None:
         """(x, y, w, h) of the ghost video inside the atlas, output pixels."""
@@ -734,8 +739,7 @@ class Hud(StyleMixin):
         self.ghost_frame(d, p, self.C["accent"])
         y = p.iay + p.ih - S(11)
         w = self.text(d, S(14), y, "GHOST", 14, "accent", track=2)
-        self.text(d, S(14) + w + S(10), y, f"BEST LAP {g.ref_number}  {fmt_time(g.ref_time)}", 15, "dim",
-                  track=1)
+        self.text(d, S(14) + w + S(10), y, f"{g.label}  {fmt_time(g.ref_time)}", 15, "dim", track=1)
         gap = g.gap_m
         if abs(gap) < 0.5:
             label, col = "LEVEL", "white"

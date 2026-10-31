@@ -158,6 +158,7 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 .calls .k { color: var(--muted); font-size: 12px; display: block; }
 .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 14px; }
 .kinds label { display: flex; gap: 8px; align-items: center; }
+input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; min-width: 0; }
 .tag { font-size: 11px; margin-left: 6px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
 .tag.clean { color: #6fd39a; border-color: #2f6b49; }
 .sens { padding: 8px 0; border-top: 1px solid var(--line); }
@@ -248,8 +249,32 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
         <span><b>Ghost lap</b><small id="ghState">Off</small></span>
         <span class="knob" aria-hidden="true"></span>
       </button>
-      <p style="margin-top:10px">A picture-in-picture of your fastest lap, matched to where you are on
+      <p style="margin-top:10px">A picture-in-picture of a lap, matched to where you are on
         track, so you can see where your line, braking and speed differ.</p>
+      <div class="cc-body" id="ghBody">
+        <div class="seg" id="ghFrom" style="margin-top:4px">
+          <button data-from="own">Fastest lap in this video</button><button data-from="other">Another session</button>
+        </div>
+        <div id="ghOther" style="display:none;margin-top:10px">
+          <p class="hint">Another RaceBox file and its video from the same track: another day, or a friend's lap.
+            To get a file's path on a Mac, select it in Finder and press Option-Command-C, then paste here.</p>
+          <div class="row" style="margin-top:8px"><input type="text" id="ghSession" class="path"
+            placeholder="RaceBox file (.csv or .vbo)" aria-label="Ghost RaceBox file"></div>
+          <div class="row" style="margin-top:6px"><input type="text" id="ghVideo" class="path"
+            placeholder="Its video (.mp4)" aria-label="Ghost video"></div>
+          <div class="row" style="margin-top:6px"><button id="ghLoad">Load laps</button>
+            <select id="ghLap" aria-label="Ghost lap" style="flex:1" disabled><option>Load the laps first</option></select></div>
+          <div class="result" id="ghInfo"></div>
+          <div id="ghSyncBox" style="display:none">
+            <p class="hint" style="margin-top:8px">Ghost video sync: if the ghost's picture doesn't match where
+              its lap is (say it reaches a corner too early), nudge it. Plus shows a later moment of its video.</p>
+            <div class="row nudge">
+              <button data-gn="-1">−1 s</button><button data-gn="-0.1">−0.1 s</button><button data-gn="-f">−1 frame</button>
+              <button data-gn="+f">+1 frame</button><button data-gn="0.1">+0.1 s</button><button data-gn="1">+1 s</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <h2>Theme</h2>
       <div class="themes" id="themes"></div>
@@ -429,11 +454,15 @@ function attachDrag(el) {
 }
 
 /* ---------- ghost lap preview ---------- */
+let ghostVer = 0;
 function placeGhost(el, p, g) {
   let v = el.querySelector("video");
+  const want = (g && g.src) || "/video";
+  if (v && v.dataset.src !== want + ghostVer) { v.remove(); v = null; }
   if (!v) {
     v = document.createElement("video");
-    v.className = "ghostvid"; v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = "/video";
+    v.className = "ghostvid"; v.muted = true; v.playsInline = true; v.preload = "auto";
+    v.src = want + (want === "/ghost-video" ? "?v=" + ghostVer : ""); v.dataset.src = want + ghostVer;
     el.appendChild(v);
   }
   if (!g || !g.active || !g.slot) { v.style.display = "none"; v.pause(); return; }
@@ -450,22 +479,24 @@ function placeGhost(el, p, g) {
 
 /* ---------- saving ---------- */
 async function save(changes) {
+  if ("ghost_source" in changes && ((P.ghost_source || {}).video !== (changes.ghost_source || {}).video)) ghostVer++;
   Object.assign(P, changes);
   $("#saved").textContent = "Saving…"; $("#saved").classList.remove("ok");
   try {
     const r = await api("/api/project", changes);
     P.offset = r.offset;
     if (r.ghost_ref !== undefined) S.ghost_ref = r.ghost_ref;
+    if (r.project && r.project.ghost_source !== undefined) P.ghost_source = r.project.ghost_source;
     if (r.race) S.race = r.race;
     const raceCh = ["race", "race_source", "race_number", "race_class", "race_field"].some(k => k in changes);
-    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || raceCh) renderLook(); }
+    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || "ghost_source" in changes || raceCh) renderLook(); }
     if (raceCh || "call_settings" in changes) { renderRace(); renderLapTable(); }
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
     $("#saved").classList.add("ok");
   } catch (e) { $("#saved").textContent = "Couldn't save: " + e.message; }
   if ("offset" in changes) { S.offset_source = "set by you"; }
   renderSync(); renderTimeline(); refreshHud();
-  if ("offset" in changes || "units" in changes || "call_settings" in changes || "ghost" in changes ||
+  if ("offset" in changes || "units" in changes || "call_settings" in changes || "ghost" in changes || "ghost_source" in changes ||
       "race" in changes || "race_source" in changes || "race_number" in changes) loadCalls();
   if ("offset" in changes && S.race && S.race.loaded) renderRace();
   if ("units" in changes) renderSens();
@@ -579,13 +610,71 @@ $("#auto").addEventListener("click", async () => {
 });
 
 /* ---------- look tab ---------- */
+let ghFrom = null, ghLaps = [];
 function renderGhost() {
-  const on = !!P.ghost;
+  const on = !!P.ghost, G = S.ghost_ref, src = P.ghost_source || {};
+  if (ghFrom === null) ghFrom = src.session ? "other" : "own";
   $("#ghSwitch").setAttribute("aria-checked", on);
-  $("#ghState").textContent = !S.ghost_ref ? "No complete lap in this video to use as the ghost"
-    : on ? `On: lap ${S.ghost_ref.lap} (${S.ghost_ref.time}), your fastest lap in this video` : "Off";
+  let st = "Off";
+  if (on) {
+    if (G && G.external) st = G.error ? "Can't use that lap yet: see below"
+      : G.time ? `On: ${G.session} lap ${G.lap} (${G.time})` : "Set it up below";
+    else if (ghFrom === "other") st = "Set it up below";
+    else st = G ? `On: lap ${G.lap} (${G.time}), your fastest lap in this video` : "No complete lap in this video to use as the ghost";
+  }
+  $("#ghState").textContent = st;
+  $("#ghBody").classList.toggle("off", !on);
+  document.querySelectorAll("#ghFrom button").forEach(b => b.setAttribute("aria-pressed", b.dataset.from === ghFrom));
+  $("#ghOther").style.display = ghFrom === "other" ? "block" : "none";
+  if (src.session && document.activeElement !== $("#ghSession")) $("#ghSession").value = src.session;
+  if (src.video && document.activeElement !== $("#ghVideo")) $("#ghVideo").value = src.video;
+  const sel = $("#ghLap");
+  if (ghLaps.length) {
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">Choose a lap…</option>' + ghLaps.map(l => `<option value="${l.n}">Lap ${l.n}  ${l.time_str}</option>`).join("");
+    sel.value = src.lap != null ? String(src.lap) : "";
+  }
+  const info = $("#ghInfo");
+  if (G && G.external) {
+    info.innerHTML = G.error ? `<span class="warn">${G.error}</span>`
+      : G.time ? `<div>Ghost: ${G.label} · ${G.time}</div><div>Video sync: ${G.sync}${G.offset != null ? `, ${(+G.offset).toFixed(2)} s` : ""}</div>` : "";
+    $("#ghSyncBox").style.display = G.time || (G.error && G.offset != null) ? "block" : "none";
+  } else { info.textContent = ""; $("#ghSyncBox").style.display = "none"; }
 }
 $("#ghSwitch").addEventListener("click", () => { save({ ghost: !P.ghost }); renderGhost(); });
+document.querySelectorAll("#ghFrom button").forEach(b => b.addEventListener("click", () => {
+  ghFrom = b.dataset.from;
+  if (ghFrom === "own" && P.ghost_source) save({ ghost_source: null });
+  renderGhost();
+}));
+async function loadGhostLaps(quiet) {
+  const path = $("#ghSession").value.trim();
+  if (!path) return;
+  const r = await (await fetch("/api/ghost-laps?session=" + encodeURIComponent(path))).json();
+  if (r.error) { if (!quiet) $("#ghInfo").innerHTML = `<span class="warn">${r.error}</span>`; ghLaps = []; return; }
+  ghLaps = r.laps;
+  if (!quiet) $("#ghInfo").textContent = `${r.laps.length} laps in that file.`;
+  renderGhost();
+}
+$("#ghLoad").addEventListener("click", () => loadGhostLaps(false));
+$("#ghLap").addEventListener("change", e => {
+  if (!e.target.value) return;
+  const src = { session: $("#ghSession").value.trim().replace(/^['"]|['"]$/g, ""),
+                video: $("#ghVideo").value.trim().replace(/^['"]|['"]$/g, ""), lap: +e.target.value };
+  const old = P.ghost_source || {};
+  if (old.video === src.video && old.session === src.session && old.offset != null) src.offset = old.offset;
+  if (!src.video) { $("#ghInfo").innerHTML = '<span class="warn">Add the video for that session too.</span>'; return; }
+  $("#ghInfo").textContent = "Lining up the ghost (this can take a moment if its video needs syncing)…";
+  save({ ghost_source: src, ghost: true });
+});
+document.querySelectorAll("[data-gn]").forEach(b => b.addEventListener("click", () => {
+  const src = Object.assign({}, P.ghost_source || {});
+  if (src.offset == null) return;
+  const f = 1 / ((S.ghost_ref && S.ghost_ref.fps) || 30);
+  const v = b.dataset.gn, d = v === "-f" ? -f : v === "+f" ? f : +v;
+  src.offset = Math.round((src.offset - d) * 1000) / 1000;   // plus = show a later moment of the ghost video
+  save({ ghost_source: src });
+}));
 
 function renderLook() {
   renderGhost();
@@ -868,6 +957,7 @@ function showRender(st) {
   renderLapTable();
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
   renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls();
+  if (P.ghost_source && P.ghost_source.session) loadGhostLaps(true);
   showRender(await api("/api/render"));
   refreshHud();
 })();

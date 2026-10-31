@@ -53,6 +53,18 @@ def apply_project(args) -> None:
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
+    # ghost from another session: command-line options on top of the saved ones
+    src = dict(proj.get("ghost_source") or {})
+    for opt, key in (("ghost_session", "session"), ("ghost_video", "video"), ("ghost_lap", "lap")):
+        if getattr(args, opt, None) is not None:
+            if src.get(key) != getattr(args, opt):
+                src.pop("offset", None)          # a different lap/video needs its own sync
+            src[key] = getattr(args, opt)
+    if getattr(args, "ghost_offset", None) is not None:
+        src["offset"] = args.ghost_offset
+    args.ghost_source = src if src.get("session") else None
+    if args.ghost_source and args.ghost_lap is not None and args.ghost is None:
+        args.ghost = True
 
 
 def load_session(args):
@@ -232,17 +244,7 @@ def _setup(args):
     offset, how = resolve_offset(args, tel, tm, vinfo)
     hide = set(filter(None, (args.hide or "").split(",")))
     args._race = race = load_race(args, tel, tm)
-    ghost_cfg = None
-    if args.ghost:
-        from .ghost import choose_ref
-        ref = choose_ref(tm, offset, vinfo["duration"],
-                         avoid=race.traffic_laps(_traffic_s(args)) if race is not None else None)
-        if ref is None:
-            print("ghost: no complete lap in this video to use as the ghost, so it's off")
-        else:
-            ghost_cfg = {"ref": ref, "offset": offset, "duration": vinfo["duration"]}
-            print(f"ghost: lap {tm.laps[ref].number} ({fmt_time(tm.laps[ref].time)}), "
-                  "your fastest lap in this video")
+    ghost_cfg = make_ghost(args, tm, offset, vinfo)
     try:
         hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
@@ -267,8 +269,9 @@ def cmd_preview(args):
     base = Path(args.output or "preview.png")
     for i, vt in enumerate(times):
         frame = video.grab_frame(args.video, vt)
+        gsrc = hud.ghost.video if hud.ghost is not None else args.video
         img = hud.compose(frame, vt + offset, ghost_frame=lambda gvt, w, h: np.asarray(
-            video.grab_frame(args.video, gvt).resize((w, h))))
+            video.grab_frame(gsrc, gvt).resize((w, h))))
         out = base if len(times) == 1 else base.with_name(f"{base.stem}_{i + 1}{base.suffix}")
         img.save(out)
         print(f"  {clock(vt)} -> {out}")
@@ -312,16 +315,42 @@ def _traffic_s(args) -> float:
     return float(call_settings(args).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
 
 
+def make_ghost(args, tm, offset: float, vinfo: dict):
+    """The ghost lap (a ghost.GhostRef), or None. Cached on args."""
+    if hasattr(args, "_ghost"):
+        return args._ghost
+    args._ghost = None
+    if not getattr(args, "ghost", None):
+        return None
+    from . import ghost as gh
+    src = getattr(args, "ghost_source", None)
+    if src and src.get("lap") is not None and src.get("video"):
+        try:
+            ref, how = gh.external_ref(tm, src["session"], src["video"], int(src["lap"]), src.get("offset"))
+        except gh.GhostError as e:
+            sys.exit(str(e))
+        print(f"ghost: lap {ref.number} ({fmt_time(ref.time)}) from {Path(src['session']).name}, "
+              f"video synced: {how}")
+        args._ghost = ref
+        return ref
+    race = getattr(args, "_race", None)
+    ref = gh.choose_ref(tm, offset, vinfo["duration"],
+                        avoid=race.traffic_laps(_traffic_s(args)) if race is not None else None)
+    if ref is None:
+        print("ghost: no complete lap in this video to use as the ghost, so it's off")
+        return None
+    print(f"ghost: lap {tm.laps[ref].number} ({fmt_time(tm.laps[ref].time)}), your fastest lap in this video")
+    args._ghost = gh.own_ref(tm, ref, offset, vinfo["duration"], args.video, float(vinfo["fps"]))
+    return args._ghost
+
+
 def chief(args, tel, tm, offset: float | None = None, duration: float | None = None):
-    ghost_ref = None
-    if getattr(args, "ghost", None) and offset is not None and duration is not None:
-        from .ghost import choose_ref
-        r_ = getattr(args, "_race", None)
-        ghost_ref = choose_ref(tm, offset, duration,
-                               avoid=r_.traffic_laps(_traffic_s(args)) if r_ is not None else None)
     race = getattr(args, "_race", None)
     if race is None and getattr(args, "race", None):
         race = args._race = load_race(args, tel, tm)
+    ghost_ref = None
+    if getattr(args, "ghost", None) and offset is not None and getattr(args, "video", None):
+        ghost_ref = make_ghost(args, tm, offset, video.probe(args.video))
     return crewchief.CrewChief.from_settings(tel, tm, units=args.units, settings=call_settings(args),
                                              ghost_ref=ghost_ref, race=race)
 
@@ -477,6 +506,12 @@ def main(argv=None):
         s.add_argument("--theme", help="carbon, daylight, neon, minimal, broadcast, hud, arcade, vintage, or a theme .json file")
         s.add_argument("--ghost", action=argparse.BooleanOptionalAction, default=None,
                        help="picture-in-picture of your best lap, matched to your position")
+        gg = p.add_argument_group("ghost lap from another session (needs --ghost)")
+        gg.add_argument("--ghost-session", metavar="CSV", help="the other RaceBox file")
+        gg.add_argument("--ghost-video", metavar="MP4", help="its video")
+        gg.add_argument("--ghost-lap", type=int, metavar="N", help="which lap, numbered as that file numbers them")
+        gg.add_argument("--ghost-offset", type=float, metavar="S",
+                        help="that video's sync (default: saved by the editor, else auto-sync)")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",
                        help="top of the speedometer scale (default 70 mph / 120 km/h)")
         r = p.add_argument_group("crew chief radio")

@@ -15,6 +15,10 @@ still win over anything in the file.
       "track": null,
       "sectors": 3,
       "ghost": true,                picture-in-picture of your best lap, matched by position
+      "ghost_source": {             optional: the ghost lap comes from another session
+        "session": "/path/other.csv", "video": "/path/other.mp4", "lap": 4,
+        "offset": 31.2              that video's sync (seconds into its data)
+      },
       "crew_chief": true,           add spoken crew chief calls to the render
       "voice": "Daniel",            a macOS voice (null = Daniel if installed)
       "voice_rate": 190,            words per minute
@@ -39,7 +43,7 @@ DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "speed_max": None, "layout": {}, "track": None, "sectors": 3, "session": None,
             "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {},
             "ghost": False, "race": False, "race_source": None, "race_number": None,
-            "race_class": False, "race_field": True}
+            "race_class": False, "race_field": True, "ghost_source": None}
 
 
 def path_for(video: str | Path) -> Path:

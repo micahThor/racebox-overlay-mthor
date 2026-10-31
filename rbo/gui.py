@@ -77,13 +77,53 @@ class Studio:
     def save(self) -> str:
         return str(project.save(self.video_path, self.proj))
 
-    def ghost_cfg(self) -> dict | None:
-        if not self.proj.get("ghost"):
-            return None
-        from .ghost import choose_ref
-        off = self.t0 + float(self.proj["offset"])
-        ref = choose_ref(self.tm, off, self.vinfo["duration"], avoid=self._avoid())
-        return None if ref is None else {"ref": ref, "offset": off, "duration": self.vinfo["duration"]}
+    def _ghost_src(self) -> dict | None:
+        src = self.proj.get("ghost_source") or None
+        return src if src and src.get("session") and src.get("video") and src.get("lap") is not None else None
+
+    def _ghost_key(self) -> str:
+        return json.dumps([bool(self.proj.get("ghost")), self._ghost_src(), self.proj.get("offset"),
+                           self._traffic_s(), self._race_key()], sort_keys=True)
+
+    def ghost_cfg(self):
+        """The ghost lap (a ghost.GhostRef) or None; see ghost_error."""
+        key = self._ghost_key()
+        if getattr(self, "_gk", None) == key:
+            return self._ghost
+        from . import ghost as gh
+        self._ghost, self.ghost_error, self.ghost_sync = None, None, None
+        if self.proj.get("ghost"):
+            src = self._ghost_src()
+            if src:
+                try:
+                    ref, how = gh.external_ref(self.tm, src["session"], src["video"], int(src["lap"]),
+                                               src.get("offset"))
+                    self._ghost, self.ghost_sync = ref, how
+                    if src.get("offset") is None:          # keep the sync it found
+                        src["offset"] = round(ref.offset_rel, 3)
+                        self.proj["ghost_source"] = src
+                        self.save()
+                        key = self._ghost_key()
+                except gh.GhostError as e:
+                    self.ghost_error = str(e).removeprefix("ghost: ")
+            else:
+                off = self.t0 + float(self.proj["offset"])
+                i = gh.choose_ref(self.tm, off, self.vinfo["duration"], avoid=self._avoid())
+                if i is not None:
+                    self._ghost = gh.own_ref(self.tm, i, off, self.vinfo["duration"], self.video_path,
+                                             float(self.vinfo["fps"]))
+        self._gk = key
+        return self._ghost
+
+    def ghost_laps(self, session: str) -> dict:
+        from . import ghost as gh
+        p = Path(session.strip().strip("'\"")).expanduser()
+        if not p.exists():
+            return {"error": f"can't find {p}"}
+        try:
+            return {"laps": gh.session_laps(str(p)), "session": str(p)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"couldn't read {p.name}: {e}"}
 
     def _race_key(self):
         p = self.proj
@@ -140,7 +180,7 @@ class Studio:
     def hud(self, width: int, height: int) -> Hud:
         key = json.dumps([width, height, self._traffic_s(), self.proj.get("theme"), self.proj.get("units"),
                           self.proj.get("scale"), self.proj.get("speed_max"),
-                          self.proj.get("layout"), self.ghost_cfg(), self._race_key(),
+                          self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True)],
                          sort_keys=True)
         with self.lock:
@@ -194,12 +234,12 @@ class Studio:
 
     def _calls(self) -> list:
         g = self.ghost_cfg()
-        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings"), g, self._race_key()],
-                         sort_keys=True)
+        key = json.dumps([self.proj.get("units"), self.proj.get("call_settings"), self._ghost_key(),
+                          self._race_key()], sort_keys=True)
         if getattr(self, "_calls_key", None) != key:
             self._calls_cache = crewchief.CrewChief.from_settings(
                 self.tel, self.tm, units=self.proj.get("units") or "mph",
-                settings=self.proj.get("call_settings"), ghost_ref=g["ref"] if g else None,
+                settings=self.proj.get("call_settings"), ghost_ref=g,
                 race=self.race()).calls()
             self._calls_key = key
         return self._calls_cache
@@ -226,13 +266,24 @@ class Studio:
         return buf.getvalue()
 
     def _ghost_ref(self) -> dict | None:
+        """What the editor shows about the ghost."""
+        src = self._ghost_src()
+        if src:
+            g = self.ghost_cfg() if self.proj.get("ghost") else None
+            out = {"external": True, "lap": src["lap"], "session": Path(src["session"]).name,
+                   "video": Path(src["video"]).name, "offset": src.get("offset"),
+                   "error": getattr(self, "ghost_error", None) if self.proj.get("ghost") else None}
+            if g is not None:
+                out.update(time=fmt_time(g.time), label=g.label, sync=self.ghost_sync,
+                           fps=g.fps)
+            return out
         from .ghost import choose_ref
         ref = choose_ref(self.tm, self.t0 + float(self.proj["offset"]), self.vinfo["duration"],
                          avoid=self._avoid())
         if ref is None:
             return None
         lap = self.tm.laps[ref]
-        return {"lap": lap.number, "time": fmt_time(lap.time)}
+        return {"external": False, "lap": lap.number, "time": fmt_time(lap.time)}
 
     def _panel_keys(self) -> list[dict]:
         names = []
@@ -273,7 +324,8 @@ class Studio:
         g = h.ghost_info(t)
         slot = h.ghost_slot()
         gp = next((p for p in h.panels if p.name == "ghost"), None)
-        ghost = {"active": g.active, "vt": g.ref_vt, "gap": g.gap_m}
+        ghost = {"active": g.active, "vt": g.ref_vt, "gap": g.gap_m,
+                 "src": "/ghost-video" if h.ghost is not None and h.ghost.external else "/video"}
         if slot and gp:
             ghost["slot"] = [slot[0], slot[1] - gp.ay, slot[2], slot[3]]   # relative to the panel
         return {"pw": pw, "ph": ph, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
@@ -285,15 +337,17 @@ class Studio:
 
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
-                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost",
+                   "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source",
                    "race", "race_source", "race_number", "race_class", "race_field"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
         if "offset" in changes:
             self.offset_source = "set by you"
-        return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": self._ghost_ref(),
-                "panels": self._panel_keys(), "race": self.race_info()}
+        ghost = self._ghost_ref()          # may fill in the ghost video's sync
+        return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": ghost,
+                "panels": self._panel_keys(), "race": self.race_info(),
+                "project": {"ghost_source": self.proj.get("ghost_source")}}
 
     def sync_lap(self, n: int, vt: float) -> dict:
         lap = next((l for l in self.tm.laps if l.number == n), None)
@@ -400,6 +454,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif u.path == "/video":
                 self._send_video()
+            elif u.path == "/ghost-video":
+                src = self.studio._ghost_src()
+                if src:
+                    self._send_video(src["video"])
+                else:
+                    self.send_error(404)
+            elif u.path == "/api/ghost-laps":
+                self._json(self.studio.ghost_laps(q.get("session", [""])[0]))
             elif u.path == "/api/state":
                 self._json(self.studio.state())
             elif u.path == "/api/hud":
@@ -444,8 +506,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
 
-    def _send_video(self):
-        path = self.studio.video_path
+    def _send_video(self, path: str | None = None):
+        path = path or self.studio.video_path
         size = Path(path).stat().st_size
         ctype = mimetypes.guess_type(path)[0] or "video/mp4"
         if not ctype.startswith("video/"):
