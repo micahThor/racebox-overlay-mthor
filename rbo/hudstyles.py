@@ -419,9 +419,6 @@ class StyleMixin:
             top = self.lap_top_speed(t)
             self.text(d, S(160), cy - S(6), "MAX", 14, "dim", track=2)
             self.text(d, S(160), cy + S(30), f"{top:.0f}" if top is not None else "---", 34, "white")
-            if self.tel.g_long is not None:
-                gl = float(np.interp(t, self.tel.t, self.tel.g_long))
-                self.text(d, S(160), cy + S(76), f"{'ACC' if gl >= 0 else 'BRK'} {abs(gl):.1f}G", 18, "dim")
         elif g == "led":
             lit = math.ceil(frac * len(self._led) - 1e-9)
             for i, (rect, f) in enumerate(self._led[:lit]):
@@ -442,20 +439,7 @@ class StyleMixin:
             d.ellipse([cx - hr, cy - hr, cx + hr, cy + hr], fill=self.C["ring"], outline=self.C["edge"],
                       width=max(1, S(2)))
             d.ellipse([cx - S(4), cy - S(4), cx + S(4), cy + S(4)], fill=self.C["edge"])
-        self.speed_footer(d, p, t)
         return True
-
-    def speed_footer(self, d, p, t):
-        y = p.iay + p.ih - self.S(16)
-        if self.tel.alt is not None:
-            a_ = float(np.interp(t, self.tel.t, self.tel.alt))
-            val = f"{a_ * 3.28084:.0f} ft" if self.units == "mph" else f"{a_:.0f} m"
-            w = self.text(d, self.S(18), y, "ALT", 13, "dim", track=1.5)
-            self.text(d, self.S(18) + w + self.S(6), y, val, 18, "white")
-        if self.tel.yaw_rate is not None:
-            val = f"{float(np.interp(t, self.tel.t, self.tel.yaw_rate)):+.0f}°/s"
-            w = self.text(d, p.iw - self.S(18), y, val, 18, "white", "r")
-            self.text(d, p.iw - self.S(18) - w - self.S(6), y, "YAW", 13, "dim", "r", track=1.5)
 
     # ------------------------------------------------------------ lean
 

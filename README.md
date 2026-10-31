@@ -14,7 +14,7 @@ The overlay has these panels, each movable, resizable and optional:
 - **Track map:** your racing line with a motorcycle marker showing where you
   are, plus the start/finish line and sector points.
 - **Speedometer:** a 0–70 mph gauge (0–120 km/h in metric) with a red zone
-  near the top, plus altitude and yaw rate. Change the top speed with
+  near the top. Change the top speed with
   `--speed-max` or in the editor.
 - **Ghost lap** (optional): your best lap's footage in a picture-in-picture,
   matched to your position on track.

@@ -827,17 +827,6 @@ class Hud(StyleMixin):
         label = f"{v:.0f}"
         self.text(d, cx, cy + self.S(26 if len(label) < 3 else 22), label,
                   72 if len(label) < 3 else 56, "white", "m")
-        # extra channels in the bottom corners
-        y = p.iay + p.ih - self.S(16)
-        if self.tel.alt is not None:
-            a_ = float(np.interp(t, self.tel.t, self.tel.alt))
-            val = f"{a_ * 3.28084:.0f} ft" if self.units == "mph" else f"{a_:.0f} m"
-            w = self.text(d, self.S(18), y, "ALT", 13, "dim", track=1.5)
-            self.text(d, self.S(18) + w + self.S(6), y, val, 18, "white")
-        if self.tel.yaw_rate is not None:
-            val = f"{float(np.interp(t, self.tel.t, self.tel.yaw_rate)):+.0f}°/s"
-            w = self.text(d, p.iw - self.S(18), y, val, 18, "white", "r")
-            self.text(d, p.iw - self.S(18) - w - self.S(6), y, "YAW", 13, "dim", "r", track=1.5)
 
     def _draw_g(self, img, d, p, t, st):
         cx, cy, R = self._g_geom
