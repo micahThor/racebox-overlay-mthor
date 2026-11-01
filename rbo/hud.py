@@ -50,6 +50,7 @@ GAUGE_SWEEP = 270.0
 
 RACE_ROWS = 12          # most rows in the race tower
 RACE_RH = 27            # row height, reference pixels
+RACE_W = 290            # standings tower width, reference pixels
 
 
 def find_font(override=None) -> str | None:
@@ -408,7 +409,7 @@ class Hud(StyleMixin):
         if self.race is not None:
             n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
             self.race_rows = min(n, RACE_ROWS)
-            specs.append(("race", "race", 330, 70 + self.race_rows * RACE_RH, "ml", self._draw_race))
+            specs.append(("race", "race", RACE_W, 70 + self.race_rows * RACE_RH, "ml", self._draw_race))
 
         # Portrait (a helmet camera held upright, or a phone-shaped export): keep the
         # middle of the frame, the track ahead, clear. Timing and map go in the sky

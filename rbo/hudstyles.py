@@ -724,7 +724,7 @@ class StyleMixin:
             x += self.text(d, x, y, str(b["lap"]), 24, hdr_col)
             self.text(d, x + S(2), y, f"/{b['laps']}", 16, hdr_col if style == "broadcast" else "dim")
         if b["finished"]:
-            fx = right - S(118 if style != "arcade" else 150)
+            fx = right - S(22)
             d.rectangle([fx, p.iay + S(19), fx + S(22), p.iay + S(41)], fill=(255, 255, 255, 255))
             q = S(5.5)
             for i in range(4):
@@ -732,13 +732,6 @@ class StyleMixin:
                     if (i + j) % 2:
                         d.rectangle([fx + i * q, p.iay + S(19) + j * q, fx + (i + 1) * q, p.iay + S(19) + (j + 1) * q],
                                     fill=(20, 20, 20, 255))
-        if b["pos"]:
-            if style == "arcade":
-                self.text(d, right, y, _ordinal(b["pos"]), 22, "accent", "r")
-            else:
-                w = self.text(d, right, y, f"/{b['of']}", 16, hdr_col if style == "broadcast" else "dim", "r")
-                self.text(d, right - w - S(2), y, f"P{b['pos']:02d}" if style == "hud" else f"P{b['pos']}", 26,
-                          hdr_col if style == "broadcast" else "accent", "r")
         if self.race_cls:
             self.text(d, pad, p.iay + S(57), self.race_cls.upper(), 10, "dim", track=1.5)
 
@@ -751,7 +744,7 @@ class StyleMixin:
         white = (255, 255, 255, 255)
         fg, dim = self.C["text"], self.C["dim"]
         pos_txt, name = str(i + 1), r["name"].upper()[:11]
-        num_x, name_x = pad + S(46), pad + S(94)
+        num_r, name_x = S(102), S(108)          # race number right-aligned against the name
         if style == "broadcast":
             if me:
                 d.polygon(self._poly((x0, ry + S(2), x1, ry + rh - S(2)), "slant"), fill=self.C["accent"])
@@ -763,7 +756,7 @@ class StyleMixin:
             f = self.font(16)
             self.text(d, (bx0 + bx1) / 2, base, pos_txt, 16, self.C["accent"] if me else (14, 18, 34, 255), "m")
             d.rectangle([S(48), ry + S(5), S(52), ry + rh - S(5)], fill=self.class_colour(r["cls"]))
-            num_x, name_x = S(58), S(114)
+            num_r, name_x = S(106), S(112)
         elif style == "hud":
             pos_txt = f"{i + 1:02d}"
             if me:
@@ -779,7 +772,7 @@ class StyleMixin:
                 d.polygon(self._poly((x0, ry + S(2), x1, ry + rh - S(2)), "pixel"), fill=self.C["accent"])
                 fg = dim = white
             self.text(d, pad + S(40), base, pos_txt, 13, fg, "r")
-            num_x, name_x = pad + S(50), pad + S(102)
+            num_r, name_x = S(122), S(130)
         elif style == "pitboard":
             if me:
                 d.rounded_rectangle([x0, ry + S(2), x1, ry + rh - S(2)], radius=S(4), fill=self.tint("yellow", 0.55))
@@ -799,18 +792,23 @@ class StyleMixin:
         if r["moved"]:
             up = r["moved"] > 0
             col = self.C["green"] if up else self.C["red"]
-            ax = {"broadcast": S(104), "arcade": pad + S(44)}.get(style, pad + S(34))
-            if style == "arcade":
-                ax = name_x - S(10)
+            ax = {"broadcast": S(60), "arcade": pad + S(46), "pitboard": S(52)}.get(style, pad + S(32))
             cx, cy, a = ax, ry + rh / 2, S(5)
             tri = [(cx - a, cy + a * 0.6), (cx + a, cy + a * 0.6), (cx, cy - a * 0.8)] if up else \
                   [(cx - a, cy - a * 0.6), (cx + a, cy - a * 0.6), (cx, cy + a * 0.8)]
             d.polygon(tri, fill=white if (me and style in ("default", "broadcast")) else col)
-        if style != "arcade":
-            self.text(d, num_x, base, r["number"], 15, dim)
-        self.text(d, name_x, base, name, 17 if style != "arcade" else 13, fg, track=0.5)
-        gsize = 15 if style != "arcade" else 11
+        # the race number: the name's colour (white on dark cards, your row in white), and bigger
+        num_col = fg if style != "arcade" else (white if me else fg)
+        self.text(d, num_r, base, r["number"], 19 if style != "arcade" else 14, num_col, "r")
+        nsize, gsize = (16, 15) if style != "arcade" else (12, 11)
+        gap_txt, gs = None, gsize
         if r["lapped"]:
-            self.text(d, right, base, "+1 LAP" if style != "arcade" else "+1L", gsize - 1, dim, "r")
+            gap_txt, gs = ("+1 LAP" if style != "arcade" else "+1L"), gsize - 1
         elif r["gap"] is not None and i > 0:
-            self.text(d, right, base, f"+{r['gap']:.1f}", gsize, dim, "r")
+            gap_txt = f"+{r['gap']:.1f}"
+        room = right - name_x - (self.measure(gap_txt, gs) + S(8) if gap_txt else 0)
+        while len(name) > 3 and self.measure(name, nsize) + len(name) * S(0.3) > room:
+            name = name[:-1]                    # long names are cut to fit beside the gap
+        self.text(d, name_x, base, name, nsize, fg, track=0.3)
+        if gap_txt:
+            self.text(d, right, base, gap_txt, gs, dim, "r")
