@@ -67,7 +67,8 @@ header .saved.ok::before { content: ""; display: inline-block; width: 7px; heigh
 main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 0; }
 .left { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow: auto; }
 
-.stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; user-select: none; }
+.stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; user-select: none;
+  align-self: center; max-width: 100%; }
 .stage video { display: block; width: 100%; height: auto; }
 .overlay { position: absolute; inset: 0; }
 .panel { position: absolute; background-repeat: no-repeat; cursor: grab; touch-action: none; }
@@ -658,7 +659,21 @@ vid.addEventListener("play", () => { $("#play").textContent = "Pause"; loop(); }
 vid.addEventListener("pause", () => { $("#play").textContent = "Play"; refreshHud(); });
 vid.addEventListener("seeked", () => { updatePlayhead(); refreshHud(); });
 vid.addEventListener("timeupdate", updatePlayhead);
-vid.addEventListener("loadedmetadata", () => { renderTimeline(); refreshHud(); });
+/* the whole video always fits on screen: an upright (portrait) video is sized by
+   the window's height instead of being drawn full width and cut off */
+function fitStage() {
+  if (!S || !S.video) return;
+  const W = S.video.width, H = S.video.height;
+  const box = stage.parentElement;
+  const cs = getComputedStyle(box);
+  const aw = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const top = stage.getBoundingClientRect().top;
+  const ah = Math.max(260, window.innerHeight - Math.max(top, 60) - 190);   // room for the controls below
+  const k = Math.min(aw / W, ah / H);
+  stage.style.width = Math.floor(W * k) + "px";
+}
+window.addEventListener("resize", fitStage);
+vid.addEventListener("loadedmetadata", () => { fitStage(); renderTimeline(); refreshHud(); });
 vid.addEventListener("error", () => {
   $("#nodata").style.display = "block";
   $("#nodata").textContent = "This browser can't play the video. Try Safari or Chrome, or export H.264.";
@@ -1194,6 +1209,7 @@ async function pickInto(kind, input, other) {
   S = await api("/api/state");
   if (S.needs_files) { $("#files").textContent = "No video open"; showOpen(S.recent, false); return; }
   vid.src = "/video";
+  fitStage();
   P = S.project; P.layout = P.layout || {};
   fps = S.video.fps || 30;
   $("#files").textContent = `${S.video.name} with ${S.data.name}`;
