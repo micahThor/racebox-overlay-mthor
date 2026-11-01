@@ -45,18 +45,20 @@ class GhostRef:
     label: str                     # "BEST LAP 2", "OCT 12 · LAP 4"
     index: int | None = None       # lap index in this session (own-video ghost), else None
     profile: dict | None = field(default=None, repr=False)   # crew chief: s, t, x, y, v (external)
+    aspect: float = 9 / 16         # that video's height / width, so the window keeps its shape
 
     @property
     def external(self) -> bool:
         return self.index is None
 
 
-def own_ref(timing: Timing, index: int, offset: float, duration: float, video: str, fps: float) -> GhostRef:
+def own_ref(timing: Timing, index: int, offset: float, duration: float, video: str, fps: float,
+            aspect: float = 9 / 16) -> GhostRef:
     lap = timing.laps[index]
     el, d = timing._lap_profiles[index]
     v_end = float(np.interp(lap.t_end, timing.tel.t, timing.tel.speed_kmh)) / 3.6
     return GhostRef(el, d, lap.t_start, offset, duration, video, float(fps), lap.number, lap.time, v_end,
-                    f"BEST LAP {lap.number}", index)
+                    f"BEST LAP {lap.number}", index, aspect=float(aspect))
 
 
 def session_laps(session: str) -> list[dict]:
@@ -150,7 +152,8 @@ def external_ref(main: Timing, session: str, video: str, lap_number: int,
     label = f"LAP {lap.number}" if same_day else f"{day.strftime('%b').upper()} {day.day} · LAP {lap.number}"
     v_end = float(np.interp(b, t, gtel.speed_kmh)) / 3.6
     ref = GhostRef(el, d, float(a), off_abs, float(info["duration"]), video, float(info["fps"]),
-                   lap.number, float(lap.time), v_end, label, None, profile)
+                   lap.number, float(lap.time), v_end, label, None, profile,
+                   aspect=float(info["height"]) / max(float(info["width"]), 1.0))
     ref.offset_rel = float(offset)            # what to save back to the project
     return ref, how
 

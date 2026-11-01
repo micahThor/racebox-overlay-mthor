@@ -118,7 +118,8 @@ class Studio:
                 i = gh.choose_ref(self.tm, off, self.vinfo["duration"], avoid=self._avoid())
                 if i is not None:
                     self._ghost = gh.own_ref(self.tm, i, off, self.vinfo["duration"], self.video_path,
-                                             float(self.vinfo["fps"]))
+                                             float(self.vinfo["fps"]),
+                                             aspect=self.vinfo["height"] / max(self.vinfo["width"], 1))
         self._gk = key
         return self._ghost
 

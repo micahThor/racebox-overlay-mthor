@@ -331,23 +331,47 @@ class Hud(StyleMixin):
             specs.append(("gforce", "gforce", 290, 312, "br", self._draw_g))
         elif self.has_lean:
             specs.append(("gforce", "lean", 380, 262, "br", self._draw_lean))
+        portrait = H > W * 1.15
+        self.portrait = portrait
         if self.ghost:
-            specs.append(("ghost", "ghost", 480, 302, "tc" if W >= H else "mc", self._draw_ghost))
+            # the window keeps the ghost video's own shape (portrait or landscape)
+            a = float(getattr(self.ghost, "aspect", 9 / 16) or 9 / 16)
+            if portrait:
+                sw = 300 if a > 1 else 440
+            else:
+                sw = 464 if a <= 1 else 340 / a
+            sh = sw * a
+            self.ghost_slot_ref = (8, 8, sw, sh)
+            label_h = 33 if sw + 16 >= 420 else 56          # narrow window: label on two lines
+            specs.append(("ghost", "ghost", sw + 16, sh + 8 + label_h, "tc" if not portrait else "tr",
+                          self._draw_ghost))
         if self.race is not None:
             n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
             self.race_rows = min(n, RACE_ROWS)
             specs.append(("race", "race", 330, 70 + self.race_rows * RACE_RH, "ml", self._draw_race))
 
-        panels = []
+        # Portrait (a helmet camera held upright, or a phone-shaped export): keep the
+        # middle of the frame, the track ahead, clear. Timing and map go in the sky
+        # at the top, the standings and ghost down the sides just below them, and
+        # speed and lean sit together at the bottom like a dash, a little larger.
+        portrait_scale = {"speed": 1.15, "gforce": 1.15} if portrait else {}
+        sized = []
         for key, name, rw, rh, corner, fn in specs:
             if key in self.hide:
                 continue
             cfg = self.layout.get(key, {})
-            k_out = self.base_k * float(cfg.get("scale", 1.0))
+            k_out = self.base_k * float(cfg.get("scale", 1.0)) * portrait_scale.get(key, 1.0)
             w, h = max(2, int(round(rw * k_out))), max(2, int(round(rh * k_out)))
-            m = int(round(36 * self.base_k))
+            sized.append((key, name, w, h, corner, fn, cfg, k_out))
+        m = int(round(36 * self.base_k))
+        gap = int(round(16 * self.base_k))
+        size = {key: (w, h) for key, _, w, h, *_ in sized}
+        panels = []
+        for key, name, w, h, corner, fn, cfg, k_out in sized:
             if "x" in cfg and "y" in cfg:
                 px, py = float(cfg["x"]) * W, float(cfg["y"]) * H
+            elif portrait:
+                px, py = self._portrait_pos(key, w, h, size, m, gap)
             else:
                 px = m if corner[1] == "l" else W - m - w if corner[1] == "r" else (W - w) / 2
                 py = m if corner[0] == "t" else H - m - h if corner[0] == "b" else \
@@ -356,6 +380,24 @@ class Hud(StyleMixin):
             py = int(round(min(max(py, 0), max(H - h, 0))))
             panels.append(Panel(name, key, px, py, w, h, k=k_out * self.ss, ss=self.ss, draw=fn))
         return panels
+
+    def _portrait_pos(self, key, w, h, size, m, gap):
+        W, H = self.W, self.H
+        if key == "laps":
+            return m, m
+        if key == "map":
+            return W - m - w, m
+        if key == "race":
+            return m, m + (size["laps"][1] + gap if "laps" in size else 0)
+        if key == "ghost":
+            return W - m - w, m + (size["map"][1] + gap if "map" in size else 0)
+        if key in ("speed", "gforce"):                       # side by side, centred, at the bottom
+            sw_ = size.get("speed", (0, 0))[0]
+            gw_ = size.get("gforce", (0, 0))[0]
+            total = sw_ + gw_ + (gap * 2 if sw_ and gw_ else 0)
+            x0 = (W - total) / 2
+            return (x0 if key == "speed" else x0 + total - w), H - m - h
+        return (W - w) / 2, H * 0.4
 
     def describe(self) -> list[dict]:
         """Panel rectangles in output pixels, for the GUI."""
@@ -696,7 +738,7 @@ class Hud(StyleMixin):
 
     # ------------------------------------------------------------ ghost lap
 
-    GHOST_SLOT = (8, 8, 464, 261)            # video area inside the panel, reference px
+    GHOST_SLOT = (8, 8, 464, 261)            # video area inside the panel, reference px (16:9 default)
 
     def ghost_info(self, t: float) -> GhostState:
         g = self.ghost
@@ -710,7 +752,7 @@ class Hud(StyleMixin):
         if p is None:
             return None
         k = p.k / self.ss
-        x, y, w, h = self.GHOST_SLOT
+        x, y, w, h = getattr(self, "ghost_slot_ref", self.GHOST_SLOT)
         return (int(round(x * k)), p.ay + int(round(y * k)), int(round(w * k)) // 2 * 2,
                 int(round(h * k)) // 2 * 2)
 
@@ -739,16 +781,18 @@ class Hud(StyleMixin):
             return
         S = self.S
         self.ghost_frame(d, p, self.C["accent"])
-        y = p.iay + p.ih - S(11)
-        w = self.text(d, S(14), y, "GHOST", 14, "accent", track=2)
-        self.text(d, S(14) + w + S(10), y, f"{g.label}  {fmt_time(g.ref_time)}", 15, "dim", track=1)
         gap = g.gap_m
         if abs(gap) < 0.5:
             label, col = "LEVEL", "white"
         else:
             label = f"{abs(gap):.0f} M {'AHEAD' if gap > 0 else 'BEHIND'}"
             col = "red" if gap > 0 else "green"
-        self.text(d, p.iw - S(14), y, label, 16, col, "r", track=1)
+        narrow = p.iw < S(420)
+        y = p.iay + p.ih - S(11)
+        y1 = y - S(23) if narrow else y                     # narrow window: two lines
+        w = self.text(d, S(14), y1, "GHOST", 14, "accent", track=2)
+        self.text(d, S(14) + w + S(10), y1, f"{g.label}  {fmt_time(g.ref_time)}", 15, "dim", track=1)
+        self.text(d, (S(14) if narrow else p.iw - S(14)), y, label, 16, col, "l" if narrow else "r", track=1)
 
     # ------------------------------------------------------------ race tower
 

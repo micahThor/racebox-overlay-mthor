@@ -348,7 +348,8 @@ def make_ghost(args, tm, offset: float, vinfo: dict):
         print("ghost: no complete lap in this video to use as the ghost, so it's off")
         return None
     print(f"ghost: lap {tm.laps[ref].number} ({fmt_time(tm.laps[ref].time)}), your fastest lap in this video")
-    args._ghost = gh.own_ref(tm, ref, offset, vinfo["duration"], args.video, float(vinfo["fps"]))
+    args._ghost = gh.own_ref(tm, ref, offset, vinfo["duration"], args.video, float(vinfo["fps"]),
+                             aspect=vinfo["height"] / max(vinfo["width"], 1))
     return args._ghost
 
 

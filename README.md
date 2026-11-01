@@ -345,6 +345,22 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
+## Portrait (upright) video
+
+A helmet camera like the GO 3S records upright: a tall, narrow picture.
+For those videos the overlay switches to a portrait layout that keeps the
+middle of the frame, the track ahead, clear:
+
+- lap timer and track map across the top, in the sky;
+- the race standings down the left and the ghost down the right, just under
+  them;
+- speed and lean side by side at the bottom like a dash, a little larger,
+  over the tank and hands rather than the road.
+
+The ghost window keeps the ghost video's own shape (tall for an upright
+video), and its label wraps onto two lines when the window is narrow. Any
+panel can still be dragged, resized or hidden in the editor.
+
 ## Themes
 
 Colour themes: **carbon** (dark cards, default), **daylight** (light cards
