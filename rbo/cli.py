@@ -53,6 +53,12 @@ def apply_project(args) -> None:
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
+    if getattr(args, "lap_items", None) is not None:
+        items = [x.strip() for x in args.lap_items.split(",") if x.strip()]
+        bad = [x for x in items if x not in ("time", "sectors", "last", "best")]
+        if bad:
+            sys.exit(f"--lap-items: unknown {', '.join(bad)}; choose from time, sectors, last, best")
+        args.layout = dict(args.layout, laps=dict(args.layout.get("laps", {}), items=items))
     if getattr(args, "map_rotate", None) is not None:
         m = dict(args.layout.get("map", {}))
         m.pop("orient", None)
@@ -531,6 +537,8 @@ def main(argv=None):
         gg.add_argument("--ghost-lap", type=int, metavar="N", help="which lap, numbered as that file numbers them")
         gg.add_argument("--ghost-offset", type=float, metavar="S",
                         help="that video's sync (default: saved by the editor, else auto-sync)")
+        s.add_argument("--lap-items", metavar="LIST", default=None,
+                       help="what the lap timer shows: any of time,sectors,last,best (default all)")
         s.add_argument("--map-rotate", type=int, choices=[0, 90, 180, 270], default=None, metavar="DEG",
                        help="turn the track map clockwise: 0, 90, 180 or 270")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",

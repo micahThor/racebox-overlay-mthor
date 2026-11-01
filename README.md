@@ -145,6 +145,10 @@ showing where each lap falls.
   straight away whether laps start where the video says they do.
 - **Look & layout tab:** pick a theme, mph or km/h, and overall size; show
   or hide panels and resize them; drag panels on the video to move them.
+  Under **Lap timer & sectors**, choose what it shows: **Lap time**,
+  **Sectors**, **Last lap**, **Best lap**. The card resizes to fit: just the
+  lap time is a small card, all four is the full-size one (command line:
+  `--lap-items time,best`).
   Under **Track map**, turn the map in quarter turns: **0°** (as recorded),
   **90°**, **180°** or **270°** clockwise, or **↻** for the next quarter turn.
   A turned map keeps its straights straight; a tall track turned 90° suits a

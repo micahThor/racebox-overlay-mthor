@@ -179,6 +179,8 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; min-width: 0; }
 .mapturn { grid-column: 1 / -1; margin: 4px 0 6px; }
 .mapturn .seg button { font-size: 13px; }
+.lapitems { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+.lapitems label { display: flex; gap: 6px; align-items: center; }
 .mapturn .flip { font-size: 13px; padding: 4px 8px; }
 .tag { font-size: 11px; margin-left: 6px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
 .tag.clean { color: #6fd39a; border-color: #2f6b49; }
@@ -755,6 +757,18 @@ function renderLook() {
     chk.addEventListener("change", () => { setPanel(p.key, { visible: chk.checked }); });
     rng.addEventListener("input", () => { row.querySelector(".pct").textContent = Math.round(rng.value * 100) + "%"; });
     rng.addEventListener("change", () => setPanel(p.key, { scale: +rng.value }));
+    if (p.key === "laps") {                // what the lap timer shows; the card fits what's on
+      const ex = document.createElement("div"); ex.className = "mapturn lapitems";
+      const on = new Set(cfg.items || ["time", "sectors", "last", "best"]);
+      const names = { time: "Lap time", sectors: "Sectors", last: "Last lap", best: "Best lap" };
+      ex.innerHTML = Object.entries(names).map(([k, n]) =>
+        `<label><input type="checkbox" data-item="${k}" ${on.has(k) ? "checked" : ""}> ${n}</label>`).join("");
+      ex.querySelectorAll("[data-item]").forEach(c => c.addEventListener("change", () => {
+        const items = [...ex.querySelectorAll("[data-item]")].filter(x => x.checked).map(x => x.dataset.item);
+        setPanel("laps", { items });
+      }));
+      row.appendChild(ex);
+    }
     if (p.key === "map") {                 // turn the track map in quarter turns
       const ex = document.createElement("div"); ex.className = "mapturn";
       const r = ((Math.round((+(cfg.rotate || 0)) / 90) % 4) + 4) % 4 * 90;

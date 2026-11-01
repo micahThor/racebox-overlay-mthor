@@ -337,11 +337,48 @@ class Hud(StyleMixin):
         dx, dy = np.asarray(xx) - cx, np.asarray(yy) - cy
         return cx + dx * c - dy * s_, cy + dx * s_ + dy * c
 
+    LAP_ITEMS = ("time", "sectors", "last", "best")
+
+    def _laps_geometry(self) -> tuple[int, int]:
+        """What the lap timer shows (layout["laps"]["items"], any of time, sectors,
+        last, best; default all) and where each part goes, in reference px.
+        The card shrinks to fit: just the lap time is a small card, everything
+        is the full-size one."""
+        cfg = self.layout.get("laps", {}) or {}
+        items = cfg.get("items")
+        items = set(self.LAP_ITEMS if items is None else items) & set(self.LAP_ITEMS)
+        if not self.timing.sector_gates:
+            items.discard("sectors")
+        self.lap_items = items
+        g = {"header": 44}
+        y = 52                                   # under the header (lap counter and delta)
+        if "time" in items:
+            g["clock"] = 128
+            y = 148
+        below = ("last" in items or "best" in items or "sectors" in items)
+        if below and "time" in items:
+            g["divider"] = 148
+        if "last" in items or "best" in items:
+            g["row"] = y + 36
+            y += 52
+        if "sectors" in items:
+            g["sectors"] = y + 22                # top of the bars
+            y += 72
+        else:
+            y += 8 if "time" not in items else 0
+        g["h"] = max(y, 72)
+        wide = "sectors" in items or ("last" in items and "best" in items)
+        need = self.measure("8:88.88", 92) / self.k + 56 if "time" in items else 0   # a held lap time
+        g["w"] = int(max(520 if wide else 360, need))
+        self._lap_geom = g
+        return g["w"], g["h"]
+
     def _layout(self) -> list[Panel]:
         W, H = self.W, self.H
         specs = []     # (key, name, ref_w, ref_h, corner, draw)
         if self.timing.laps:
-            specs.append(("laps", "laps", 520, 272 if self.timing.sector_gates else 200, "tl",
+            lw, lh = self._laps_geometry()
+            specs.append(("laps", "laps", lw, lh, "tl",
                           self._draw_laps))
         x, y = self.map_rot(self.timing.x, self.timing.y)
         aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
@@ -448,8 +485,10 @@ class Hud(StyleMixin):
 
     def _static_laps(self, img, d, p):
         pad = self.S(24)
-        d.line([(pad, p.iay + self.S(148)), (p.iw - pad, p.iay + self.S(148))],
-               fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, self.S(1)))
+        if "divider" in self._lap_geom:
+            yv = p.iay + self.S(self._lap_geom["divider"])
+            d.line([(pad, yv), (p.iw - pad, yv)],
+                   fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, self.S(1)))
 
     def _static_map(self, img, d, p):
         pad = self.S(26)
@@ -678,31 +717,38 @@ class Hud(StyleMixin):
             self.text(d, right - w / 2, oy + S(44), label, 24,
                       (255, 255, 255, 255) if self.pill_solid() else col, "m")
 
+        g, items = self._lap_geom, self.lap_items
         # main clock
-        if held:
-            self.text(d, pad - S(3), oy + S(128), fmt_time(st.finished.time), 92, st.finished_color)
-        elif st.elapsed is not None:
-            self.text(d, pad - S(3), oy + S(128), fmt_time(st.elapsed, digits=1), 92, "white")
-        else:
-            self.text(d, pad - S(3), oy + S(128), "-:--.-", 92, self.tint("dim", 0.6))
+        if "clock" in g:
+            yc = oy + S(g["clock"])
+            if held:
+                self.text(d, pad - S(3), yc, fmt_time(st.finished.time), 92, st.finished_color)
+            elif st.elapsed is not None:
+                self.text(d, pad - S(3), yc, fmt_time(st.elapsed, digits=1), 92, "white")
+            else:
+                self.text(d, pad - S(3), yc, "-:--.-", 92, self.tint("dim", 0.6))
 
-        # last / best
-        y = oy + S(184)
-        w = self.text(d, pad, y, "LAST", 15, "dim", track=2)
-        self.text(d, pad + w + S(10), y, fmt_time(st.last_lap), 26, "white")
-        bx = p.iw / 2 + S(10)
-        w = self.text(d, bx, y, "BEST", 15, "dim", track=2)
-        self.text(d, bx + w + S(10), y, fmt_time(st.best_lap), 26,
-                  "purple" if st.best_lap else "dim")
+        # last / best (side by side, or whichever one is on)
+        if "row" in g:
+            y = oy + S(g["row"])
+            x = pad
+            if "last" in items:
+                w = self.text(d, x, y, "LAST", 15, "dim", track=2)
+                self.text(d, x + w + S(10), y, fmt_time(st.last_lap), 26, "white")
+                x = p.iw / 2 + S(10)
+            if "best" in items:
+                w = self.text(d, x, y, "BEST", 15, "dim", track=2)
+                self.text(d, x + w + S(10), y, fmt_time(st.best_lap), 26,
+                          "purple" if st.best_lap else "dim")
 
         # sectors: a segmented bar that fills as each sector is driven
         n = len(self.timing.sector_gates) + 1 if self.timing.sector_gates else 0
-        if not n:
+        if not n or "sectors" not in g:
             return
         cells = st.sectors or [None] * n
         gap = S(8)
         cw = (p.iw - 2 * pad - gap * (n - 1)) / n
-        top, bh = oy + S(222), S(7)
+        top, bh = oy + S(g["sectors"]), S(7)
         k = self.timing.lap_index_at(t)
         ref = self.timing._ref_index(k) if k is not None else None
         ref_secs = self.timing.laps[ref].sectors if ref is not None else None
