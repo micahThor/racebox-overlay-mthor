@@ -290,6 +290,7 @@ def _setup(args):
                   speed_max=args.speed_max, ghost=ghost_cfg, race=race,
                   race_class=bool(args.race_class), race_field=bool(args.race_field),
                   strip_size=(args.project or {}).get("strip_size") or {},
+                  strip_align=(args.project or {}).get("strip_align") or {},
                   info=project.session_info(tel, getattr(args, "info_saved", None)),
                   frame_color=args.frame_color if args.frame_color is not None
                   else (args.project or {}).get("frame_color"))

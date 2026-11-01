@@ -215,7 +215,7 @@ class Studio:
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True),
                           self._strips(), self.proj.get("strip_size"), self.info(),
-                          self.proj.get("frame_color")],
+                          self.proj.get("frame_color"), self.proj.get("strip_align")],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -229,7 +229,8 @@ class Studio:
                         race_class=bool(self.proj.get("race_class")),
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
                         strip_size=self.proj.get("strip_size") or {}, info=self.info(),
-                        frame_color=self.proj.get("frame_color"))
+                        frame_color=self.proj.get("frame_color"),
+                        strip_align=self.proj.get("strip_align") or {})
                 self._huds[key] = h
             return h
 
@@ -391,7 +392,7 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info", "frame_color"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info", "frame_color", "strip_align"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -475,7 +476,8 @@ class Studio:
                         race=self.race(), race_class=bool(self.proj.get("race_class")),
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
                         strip_size=self.proj.get("strip_size") or {}, info=self.info(),
-                        frame_color=self.proj.get("frame_color"))
+                        frame_color=self.proj.get("frame_color"),
+                        strip_align=self.proj.get("strip_align") or {})
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")
