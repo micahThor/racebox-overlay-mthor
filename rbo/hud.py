@@ -166,7 +166,7 @@ class Hud(StyleMixin):
                  layout: dict | None = None, speed_max: float | None = None,
                  supersample: int = 2, ghost=None, race=None,
                  race_class: bool = False, race_field: bool = True, sidebar: str | None = None,
-                 strips=None):
+                 strips=None, strip_size=None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
@@ -174,7 +174,7 @@ class Hud(StyleMixin):
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
                          race_class=race_class, race_field=race_field, sidebar=sidebar,
-                         strips=strips)
+                         strips=strips, strip_size=strip_size)
         self.race_field = bool(race_field)
         # race: an rbo.race.Race for the standings tower; race_class: only your class
         self.race = race
@@ -198,10 +198,12 @@ class Hud(StyleMixin):
             strips = [sidebar] if sidebar else []
         self.strips = [st for st in ("left", "right", "bottom") if st in set(strips or [])]
         self.sidebar = self.strips[0] if self.strips else None       # (older callers)
+        mult = lambda st: min(max(float((strip_size or {}).get(st, 1.0) or 1.0), 0.4), 2.5)
+        even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(width, height)
-        self.left_w = sw if "left" in self.strips else 0
-        self.right_w = sw if "right" in self.strips else 0
-        self.bottom_h = bottom_height(width, height) if "bottom" in self.strips else 0
+        self.left_w = even(sw * mult("left")) if "left" in self.strips else 0
+        self.right_w = even(sw * mult("right")) if "right" in self.strips else 0
+        self.bottom_h = even(bottom_height(width, height) * mult("bottom")) if "bottom" in self.strips else 0
         self.canvas_w, self.canvas_h = width + self.left_w + self.right_w, height + self.bottom_h
         self.vid_x0 = self.left_w
         self.base_k = min(width, height) / 1080 * scale        # output px per reference px
@@ -659,11 +661,13 @@ class Hud(StyleMixin):
                 if key in self.hide or self.in_side(key) != st:
                     continue
                 L, T, R, B = self._trim(name)
+                # the size slider: a share of the strip (100% fills it)
+                share = min(max(float((self.layout.get(key, {}) or {}).get("scale", 1.0) or 1.0), 0.2), 1.0)
                 if st == "bottom":
-                    k = (sh - 2 * m) / max(rh - T - B, 1)
+                    k = (sh - 2 * m) / max(rh - T - B, 1) * share
                     items.append((key, k, (rw - L - R) * k))
                 else:
-                    k = (sw - 2 * m) / max(rw - L - R, 1)
+                    k = (sw - 2 * m) / max(rw - L - R, 1) * share
                     items.append((key, k, (rh - T - B) * k))
             if not items:
                 continue
@@ -695,7 +699,7 @@ class Hud(StyleMixin):
         """Panel rectangles in output pixels, for the GUI."""
         return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.vw, "h": p.vh,
                  "ay": p.ay + p.vy, "ax": p.vx,
-                 "reshape": "none" if self.in_side(p.key) else self.RESHAPE.get(p.key, ""),
+                 "reshape": "" if self.in_side(p.key) else self.RESHAPE.get(p.key, ""),
                  "side": self.in_side(p.key)} for p in self.panels]
 
     def frame_info(self) -> dict:

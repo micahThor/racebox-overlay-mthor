@@ -387,6 +387,12 @@ strip; panels in the bottom strip sit side by side, each as tall as it; all
 of a strip's panels shrink together if they don't fit. The strips are a
 solid, slightly darker shade of the theme's card colour.
 
+Sizes: a panel's size slider (or its corner handle on the preview) works as
+a share of its strip, up to 100%. Each strip also has its own size slider
+(50-200%) under the strip buttons; a bigger strip makes the output bigger and
+its full-size panels with it (a tall panel like the race panel is limited by
+the strip's height).
+
 From the command line: `--place race=right,speed=bottom,gforce=bottom` (the
 strips used are turned on automatically; `video` puts a panel back).
 

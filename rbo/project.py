@@ -47,7 +47,8 @@ DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {},
             "ghost": False, "race": False, "race_source": None, "race_number": None,
             "race_class": False, "race_field": True, "ghost_source": None,
-            "trim": None, "race_side": None, "side": None, "strips": []}
+            "trim": None, "race_side": None, "side": None, "strips": [],
+            "strip_size": {}}
 
 
 def path_for(video: str | Path) -> Path:

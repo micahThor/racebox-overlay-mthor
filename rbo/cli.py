@@ -287,7 +287,7 @@ def _setup(args):
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
                   speed_max=args.speed_max, ghost=ghost_cfg, race=race,
                   race_class=bool(args.race_class), race_field=bool(args.race_field),
-                  strips=args.strips or [])
+                  strips=args.strips or [], strip_size=(args.project or {}).get("strip_size") or {})
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")

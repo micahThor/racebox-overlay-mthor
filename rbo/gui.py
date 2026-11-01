@@ -169,9 +169,12 @@ class Studio:
         from .hud import bottom_height, sidebar_width
         W, H = self.vinfo["width"], self.vinfo["height"]
         st = self._strips()
+        ss = self.proj.get("strip_size") or {}
+        mult = lambda k: min(max(float(ss.get(k, 1.0) or 1.0), 0.4), 2.5)
+        even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(W, H)
-        lw, rw = (sw if "left" in st else 0), (sw if "right" in st else 0)
-        bh = bottom_height(W, H) if "bottom" in st else 0
+        lw, rw = (even(sw * mult("left")) if "left" in st else 0), (even(sw * mult("right")) if "right" in st else 0)
+        bh = even(bottom_height(W, H) * mult("bottom")) if "bottom" in st else 0
         cw = W + lw + rw
         rects = {}
         if lw:
@@ -212,7 +215,7 @@ class Studio:
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True),
-                          self._strips()],
+                          self._strips(), self.proj.get("strip_size")],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -224,7 +227,8 @@ class Studio:
                         layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"),
                         ghost=self.ghost_cfg(), race=self.race(),
                         race_class=bool(self.proj.get("race_class")),
-                        race_field=self.proj.get("race_field", True) is not False, strips=self._strips())
+                        race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
+                        strip_size=self.proj.get("strip_size") or {})
                 self._huds[key] = h
             return h
 
@@ -376,7 +380,7 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field", "strips"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -458,7 +462,8 @@ class Studio:
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
                         speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
                         race=self.race(), race_class=bool(self.proj.get("race_class")),
-                        race_field=self.proj.get("race_field", True) is not False, strips=self._strips())
+                        race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
+                        strip_size=self.proj.get("strip_size") or {})
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")
