@@ -609,20 +609,22 @@ class StyleMixin:
         elif self.multi_class() and not getattr(self, "combined", False):   # which colour is which class
             self.class_legend(d, p, S(14) if style != "broadcast" else S(18), p.iay + S(69))
 
-    def class_legend(self, d, p, x0, y):
+    def class_legend(self, d, p, x0, y, sizes=(11, 10, 9, 8)):
         """One line of class colour dots and names (shrinks to fit the width)."""
         S = self.S
         classes = self.shown_classes()
-        for size in (11, 10, 9, 8):
-            w = sum(S(12) + self.measure(c.upper(), size) + len(c) * S(0.8) + S(10) for c in classes)
+        for size in sizes:
+            dot, gap = S(size * 0.75), S(size * 0.95)
+            w = sum(dot + S(4) + self.measure(c.upper(), size) + len(c) * S(0.8) + gap for c in classes)
             if x0 + w <= p.iw - S(10):
                 break
+        dot, gap = S(size * 0.75), S(size * 0.95)
         x = x0
         for c in classes:
             col = self.class_colour(c)
-            d.ellipse([x, y - S(8.5), x + S(8), y - S(0.5)], fill=col)
-            x += S(12)
-            x += self.text(d, x, y, c.upper(), size, "dim", track=0.8) + S(10)
+            d.ellipse([x, y - S(size * 0.36) - dot / 2 - S(0.5), x + dot, y - S(size * 0.36) + dot / 2 - S(0.5)], fill=col)
+            x += dot + S(4)
+            x += self.text(d, x, y, c.upper(), size, "dim", track=0.8) + gap
 
     def tower_row(self, d, p, i, r, ry, rh, t, style):
         S, pad = self.S, self.S(18)

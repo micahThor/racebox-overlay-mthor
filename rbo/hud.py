@@ -638,7 +638,7 @@ class Hud(StyleMixin, GaugeMixin):
                 aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
                 pad = 2 * MAP_PAD
                 map_h = min(max((rw_ - pad) * aspect + pad, 110), 420)
-                key_h = 24 if self.multi_class() else 0
+                key_h = 30 if self.multi_class() else 0
                 tower_h = (70 + self.race_rows * RACE_RH) * self._shape_factor(cfg, "h")
                 self._racemap = (map_h, key_h)
                 specs = [sp for sp in specs if sp[0] != "map"]
@@ -1233,7 +1233,7 @@ class Hud(StyleMixin, GaugeMixin):
         self._static_map(img, d, mp)
         S = self.S
         if self._racemap[1]:                     # the class key, along the bottom under the standings
-            self.class_legend(d, p, S(14), p.iay + p.ih - S(12))
+            self.class_legend(d, p, S(14), p.iay + p.ih - S(12), sizes=(15, 14, 13, 12, 11, 10, 9))
         d.line([(S(14), tw.iay), (p.iw - S(14), tw.iay)],
                fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, S(1)))
 
