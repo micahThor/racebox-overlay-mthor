@@ -424,10 +424,10 @@ preview. Drag along a strip to change the order, or back onto the video to
 take it out. Panels in a side strip stack top to bottom, each as wide as the
 strip; panels in the top or bottom strip sit side by side, each as tall as
 it, as a row centred over or under the video (not the whole frame); all of a strip's panels
-shrink together if they don't fit. Each strip also has **Panels sit at the
-Top / Center / Bottom**: where a side strip's stack sits (top, middle or
-bottom of the strip), or where the panels in the top or bottom strip's row
-line up when they're different heights. A panel's size slider (or its corner
+shrink together if they don't fit. Each strip also says where its panels
+sit: a side strip's stack at the **Top**, **Center** or **Bottom**; the top or
+bottom strip's row at the **Left** or **Right** end of the frame, or
+**Center** (centred over or under the video). A panel's size slider (or its corner
 handle on the preview) works as a share of its strip, up to 100%. Unless you
 move them, the race panel starts in the right strip, the logos at either end
 of the bottom strip and the event name, track name and date in a row in the

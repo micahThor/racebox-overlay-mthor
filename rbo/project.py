@@ -36,8 +36,8 @@ still win over anything in the file.
       "strip_size": {"left": 1.0, "right": 1.4, "top": 0.6, "bottom": 0.8},   the frame round
                                     the video (four strips, always on); a panel goes in one
                                     with "where": "left"/"right"/"top"/"bottom" ("video" = on it)
-      "strip_align": {"left": "top", "bottom": "bottom"},   panels in a strip sit at its
-                                    top, center (default) or bottom
+      "strip_align": {"left": "top", "bottom": "right"},   side strips: top/center/bottom;
+                                    top and bottom strips: left/center/right (default center)
       "frame_color": "#1b2a3a",      the frame's colour (null = the theme's own)
       "info": {"event": "SFL MiniGP Round 6", "track": "...", "date": "...",
                "event_logo": "/path/logo.png", "track_logo": "/path/track.png"}

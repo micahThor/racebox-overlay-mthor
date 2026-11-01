@@ -220,9 +220,11 @@ class Hud(StyleMixin, GaugeMixin):
         # (`strips` and `sidebar` are accepted for older callers.)
         self.strips = ["left", "right", "top", "bottom"]
         self.sidebar = "right"
-        # where a strip's panels sit across its depth: "top", "center" or "bottom"
-        # (a side strip's stack, or the panels in the top/bottom strip's row)
-        self.strip_align = {st: a for st, a in (strip_align or {}).items() if a in ("top", "center", "bottom")}
+        # where a strip's panels sit: a side strip's stack at its "top", "center"
+        # or "bottom"; the top/bottom strip's row at its "left", "center" or "right"
+        ok = {"left": ("top", "center", "bottom"), "right": ("top", "center", "bottom"),
+              "top": ("left", "center", "right"), "bottom": ("left", "center", "right")}
+        self.strip_align = {st: a for st, a in (strip_align or {}).items() if a in ok.get(st, ())}
         mult = lambda st: min(max(float((strip_size or {}).get(st, 1.0) or 1.0), 0.4), 2.5)
         even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(width, height)
@@ -686,12 +688,17 @@ class Hud(StyleMixin, GaugeMixin):
                            key=lambda it: self._side_order(it[0]))
             al = self.strip_align.get(st, "center")
             place = lambda room, size: m if al == "top" else room - m - size if al == "bottom" else (room - size) / 2
-            if st in ("top", "bottom"):         # a row, centred over/under the video
+            if st in ("top", "bottom"):         # a row: at the strip's left or right end, or centred on the video
                 row = sum(it[8][2] for it in items) + gap * max(len(items) - 1, 0)
-                x = self.vid_x0 + (self.W - row) / 2
+                if al == "left":
+                    x = sx0 + m
+                elif al == "right":
+                    x = sx0 + sw - m - row
+                else:
+                    x = self.vid_x0 + (self.W - row) / 2
                 x = min(max(x, sx0), sx0 + max(sw - row, 0))   # too wide: slide along, stay in frame
                 for it in items:
-                    side_pos[it[0]] = (x, sy0 + max(place(sh, it[8][3]), 0))
+                    side_pos[it[0]] = (x, sy0 + (sh - it[8][3]) / 2)
                     x += it[8][2] + gap
             else:                               # a column in the side strip: top, centre or bottom
                 col = sum(it[8][3] for it in items) + gap * max(len(items) - 1, 0)
