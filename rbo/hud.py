@@ -318,31 +318,21 @@ class Hud(StyleMixin):
     # ------------------------------------------------------------ map rotation
 
     def _setup_map_rotation(self) -> None:
-        """How the track map is turned. layout["map"]: "orient" is "north" (as
-        recorded, north up), "horizontal" (the track's long side across) or
-        "vertical" (long side up and down); "rotate" adds degrees on top
-        (anticlockwise)."""
+        """How the track map is turned: layout["map"]["rotate"] is 0, 90, 180 or
+        270 degrees clockwise from the map as recorded (other values snap to
+        the nearest quarter turn)."""
         cfg = self.layout.get("map", {}) or {}
-        orient = str(cfg.get("orient", "north") or "north").lower()
+        quarter = int(round(float(cfg.get("rotate", 0) or 0) / 90.0)) % 4
+        self.map_quarter = quarter
         x, y = self.timing.x, self.timing.y
         self._map_c = (float((x.min() + x.max()) / 2), float((y.min() + y.max()) / 2))
-        ang = 0.0
-        if orient in ("horizontal", "vertical") and len(x) > 10:
-            pts = np.column_stack([x - x.mean(), y - y.mean()])
-            evals, evecs = np.linalg.eigh(pts.T @ pts)
-            vx, vy = evecs[:, int(np.argmax(evals))]            # the track's long axis
-            phi = math.atan2(vy, vx)
-            ang = -phi + (math.pi / 2 if orient == "vertical" else 0.0)
-            # of the two ways round, keep the one closer to the recorded orientation
-            ang = (ang + math.pi / 2) % math.pi - math.pi / 2
-        ang += math.radians(float(cfg.get("rotate", 0) or 0))
-        self._map_ang = ang
+        self._map_ang = -quarter * math.pi / 2                  # clockwise on screen
 
     def map_rot(self, xx, yy):
         """World x/y (metres) turned the way the map is shown."""
-        if not self._map_ang:
+        if not self.map_quarter:
             return xx, yy
-        c, s_ = math.cos(self._map_ang), math.sin(self._map_ang)
+        c, s_ = [(1, 0), (0, -1), (-1, 0), (0, 1)][self.map_quarter]     # exact quarter turns
         cx, cy = self._map_c
         dx, dy = np.asarray(xx) - cx, np.asarray(yy) - cy
         return cx + dx * c - dy * s_, cy + dx * s_ + dy * c
@@ -510,7 +500,7 @@ class Hud(StyleMixin):
         g = self.timing.start_gate
         if g is not None:
             gx, gy = self._map_xform(g.x, g.y)
-            ca, sa = math.cos(self._map_ang), math.sin(self._map_ang)
+            ca, sa = [(1, 0), (0, -1), (-1, 0), (0, 1)][self.map_quarter]
             gdx, gdy = g.dx * ca - g.dy * sa, g.dx * sa + g.dy * ca      # travel direction, turned
             nx, ny = -gdy, -gdx            # perpendicular to travel, in screen coords (y flipped)
             tx, ty = gdx, -gdy
