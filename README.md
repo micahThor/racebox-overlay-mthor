@@ -316,8 +316,9 @@ pick your number. Settings save with the video, so after that `--race` or
   it, and the class colour key along the bottom. Move, resize and reshape it as one ("Track
   map & standings" in the panel list); the map's turn setting still applies.
   Hide either part to get the other on its own.
-- **Off the picture:** the race panel can go in a strip beside or under the
-  video (Race tab, or see "Strips" below), so it doesn't cover the picture.
+- **Off the picture:** the race panel starts in the right strip of the frame
+  round the video (see "The frame round the video" below), so it doesn't
+  cover the picture; move it in the Race tab or by dragging.
 - **The field on the map:** every other rider still racing is shown on the
   track map as a tag with their race number, and you are a bigger circle
   (a square in Retro Arcade) with your own race number in it, so you stand out. When several classes race together, each
@@ -367,36 +368,64 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
-## Strips beside and under the video
+## The frame round the video
 
-To keep the picture clear, turn on strips around it in **Look & layout**:
-**Left**, **Right** and **Bottom**, any combination. The output frame grows
-to make room (the video itself isn't stretched or cropped):
+Every render has a frame round the picture: strips on the left, the right and
+underneath, drawn as one piece in the theme's style so they read as a single
+border whatever size each strip is. They share one fill and texture (carbon
+weave, broadcast pinstripes, a HUD grid, arcade scanlines, vintage leather
+grain), one outline round the outside, and a trim hugging the picture, whose
+lower corners are shaped to match (rounded, cut, stepped or square). The
+output frame grows to make room (the video itself isn't stretched or cropped):
 
-- a side strip makes an upright video 4:5 (a 1530x2752 GO 3S clip gets a
-  672-pixel strip) or a wide one 21:9 (1080p gets 600 pixels); with both
-  sides on, each gets that width;
+- each side strip is the width that would make an upright video 4:5 (a
+  1530x2752 GO 3S clip gets 672 pixels a side) or a wide one 21:9 (1080p gets
+  600 pixels);
 - the bottom strip is a slim bar under everything, 12% of the video's longer
   side (230 pixels under 1080p, 330 under a 1530x2752 upright clip), sized
   for a row of small panels like speed, the lap timer and lean.
 
-Then put any panel in a strip: choose it under the panel in the Panels list
-("On the video", "Left strip", ...), or drag the panel into the strip on the
+The strips are always on; make each one wider or narrower with its slider
+(50-200%) under **Frame round the video** in **Look & layout**. A bigger strip
+makes the output bigger and its full-size panels with it (a tall panel like
+the race panel is limited by the strip's height). From the command line the
+sizes come from the project file (`"strip_size": {"left": 1, "right": 1.4,
+"bottom": 0.8}`).
+
+Put any panel in a strip: choose it under the panel in the Panels list ("On
+the video", "Left strip", ...), or drag the panel into the strip on the
 preview. Drag along a strip to change the order, or back onto the video to
 take it out. Panels in a side strip stack top to bottom, each as wide as the
 strip; panels in the bottom strip sit side by side, each as tall as it, as a
-row centred under the video (not the whole frame); all
-of a strip's panels shrink together if they don't fit. The strips are a
-solid, slightly darker shade of the theme's card colour.
+row centred under the video (not the whole frame); all of a strip's panels
+shrink together if they don't fit. A panel's size slider (or its corner
+handle on the preview) works as a share of its strip, up to 100%. Unless you
+move them, the race panel starts in the right strip, the logos at either end
+of the bottom strip and the event name, track name and date in the left strip.
 
-Sizes: a panel's size slider (or its corner handle on the preview) works as
-a share of its strip, up to 100%. Each strip also has its own size slider
-(50-200%) under the strip buttons; a bigger strip makes the output bigger and
-its full-size panels with it (a tall panel like the race panel is limited by
-the strip's height).
+From the command line: `--place race=right,speed=bottom,gforce=bottom`
+(`video` puts a panel back on the picture).
 
-From the command line: `--place race=right,speed=bottom,gforce=bottom` (the
-strips used are turned on automatically; `video` puts a panel back).
+## Event and track
+
+At the bottom of **Look & layout**, under **Event & track**:
+
+- **Event name** (who's running the event), **Track name** and **Date &
+  time**: type the text. Each is its own small card in the theme, with a label
+  (EVENT, TRACK, DATE); in a strip they line up at the same width and text
+  size. The track name starts as the track in your RaceBox file, and the date
+  as when the session started (in your computer's time zone); **Reset** goes
+  back to those. Empty a box to leave that panel off.
+- **Event logo** and **Track logo**: **Choose…** an image. A PNG with a clear
+  background looks best; empty margins round it are trimmed off. Logos are
+  shown as they are, without a card.
+
+Each one appears in the Panels list, where you can turn it off, size it, and
+put it in a strip or on the video like any other panel.
+
+From the command line: `--event-name "SFL MiniGP Round 6" --track-name "..."
+--date "..." --event-logo logo.png --track-logo track.png` (`''` turns one
+off; `--place event_logo=left,date=bottom` moves them).
 
 ## Portrait (upright) video
 

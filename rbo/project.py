@@ -33,8 +33,12 @@ still win over anything in the file.
       "race_number": "96",          your start number in that race
       "race_class": false,          tower shows only your class
       "race_field": true,           the other riders as dots on the map
-      "strips": ["right", "bottom"], extra space beside/under the video; a panel goes in one
-                                    with "where": "left"/"right"/"bottom" in its layout
+      "strip_size": {"left": 1.0, "right": 1.4, "bottom": 0.8},   the frame round the video
+                                    (left, right and bottom strips, always on); a panel goes
+                                    in one with "where": "left"/"right"/"bottom" ("video" = on it)
+      "info": {"event": "SFL MiniGP Round 6", "track": "...", "date": "...",
+               "event_logo": "/path/logo.png", "track_logo": "/path/track.png"}
+                                    track and date start from the RaceBox file; "" = off
     }
 """
 from __future__ import annotations
@@ -48,7 +52,7 @@ DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "ghost": False, "race": False, "race_source": None, "race_number": None,
             "race_class": False, "race_field": True, "ghost_source": None,
             "trim": None, "race_side": None, "side": None, "strips": [],
-            "strip_size": {}}
+            "strip_size": {}, "info": None}
 
 
 def path_for(video: str | Path) -> Path:
@@ -84,3 +88,18 @@ def save(video: str | Path, data: dict) -> Path:
     keep = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     p.write_text(json.dumps(keep, indent=2) + "\n")
     return p
+
+
+INFO_KEYS = ("event", "track", "date", "event_logo", "track_logo")
+
+
+def session_info(tel, saved: dict | None) -> dict:
+    """The event name, track name, date and logos to show. The track name and the
+    date start from the RaceBox file (its track, and when the session started in
+    this computer's time zone) until they're set; an empty one is off."""
+    from datetime import datetime
+    saved = saved or {}
+    when = datetime.fromtimestamp(float(tel.t[0]))
+    defaults = {"track": str(tel.meta.get("Track", "")).strip(),
+                "date": f"{when:%b} {when.day}, {when.year} · {when.hour % 12 or 12}:{when:%M %p}"}
+    return {k: (defaults.get(k, "") if saved.get(k) is None else saved[k]) for k in INFO_KEYS}

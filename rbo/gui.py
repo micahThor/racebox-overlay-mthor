@@ -161,29 +161,26 @@ class Studio:
         return self._race
 
     def _strips(self) -> list:
-        """Which strips beside/under the video are on."""
-        return [st for st in ("left", "right", "bottom") if st in (self.proj.get("strips") or [])]
+        """The strips round the video (always all three; only their sizes change)."""
+        return ["left", "right", "bottom"]
+
+    def info(self) -> dict:
+        """The event name, track name, date and logos (see project.session_info)."""
+        return project.session_info(self.tel, self.proj.get("info"))
 
     def canvas(self) -> dict:
         """The output frame at full size, with its strips (output pixels)."""
         from .hud import bottom_height, sidebar_width
         W, H = self.vinfo["width"], self.vinfo["height"]
-        st = self._strips()
         ss = self.proj.get("strip_size") or {}
         mult = lambda k: min(max(float(ss.get(k, 1.0) or 1.0), 0.4), 2.5)
         even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(W, H)
-        lw, rw = (even(sw * mult("left")) if "left" in st else 0), (even(sw * mult("right")) if "right" in st else 0)
-        bh = even(bottom_height(W, H) * mult("bottom")) if "bottom" in st else 0
+        lw, rw = even(sw * mult("left")), even(sw * mult("right"))
+        bh = even(bottom_height(W, H) * mult("bottom"))
         cw = W + lw + rw
-        rects = {}
-        if lw:
-            rects["left"] = [0, 0, lw, H]
-        if rw:
-            rects["right"] = [lw + W, 0, rw, H]
-        if bh:
-            rects["bottom"] = [0, H, cw, bh]
-        return {"w": cw, "h": H + bh, "vx": lw, "vw": W, "vh": H, "strips": rects}
+        return {"w": cw, "h": H + bh, "vx": lw, "vw": W, "vh": H,
+                "strips": {"left": [0, 0, lw, H], "right": [lw + W, 0, rw, H], "bottom": [0, H, cw, bh]}}
 
     def _traffic_s(self) -> float:
         return float((self.proj.get("call_settings") or {}).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
@@ -215,7 +212,7 @@ class Studio:
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True),
-                          self._strips(), self.proj.get("strip_size")],
+                          self._strips(), self.proj.get("strip_size"), self.info()],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -228,7 +225,7 @@ class Studio:
                         ghost=self.ghost_cfg(), race=self.race(),
                         race_class=bool(self.proj.get("race_class")),
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
-                        strip_size=self.proj.get("strip_size") or {})
+                        strip_size=self.proj.get("strip_size") or {}, info=self.info())
                 self._huds[key] = h
             return h
 
@@ -258,6 +255,7 @@ class Studio:
             "call_kinds": crewchief.KINDS,
             "race_kinds": __import__("rbo.race", fromlist=["RACE_KINDS"]).RACE_KINDS,
             "race": self.race_info(),
+            "info": self.info(),
             "call_defaults": crewchief.DEFAULTS,
             "speech": {"available": crewchief.tts_backend() is not None,
                        "engine": crewchief.tts_backend(),
@@ -335,6 +333,11 @@ class Studio:
             names.append(("gforce", "Lean angle"))
         elif self.tel.g_lat is not None:
             names.append(("gforce", "G-force"))
+        info = self.info()
+        for k, lbl in (("event_logo", "Event logo"), ("track_logo", "Track logo"), ("event", "Event name"),
+                       ("track", "Track name"), ("date", "Date & time")):
+            if str(info.get(k) or "").strip():
+                names.append((k, lbl))
         inside = {"map"} if racing and (self.proj.get("layout") or {}).get("race", {}).get("visible") is not False \
             and (self.proj.get("layout") or {}).get("map", {}).get("visible") is not False else set()
         return [{"key": k, "label": lbl, "inside": k in inside} for k, lbl in names]
@@ -346,6 +349,7 @@ class Studio:
         pw = int(max(320, min(pw, W, 1920)))
         ph = int(round(pw * H / W))
         h = self.hud(pw, ph)
+        self._frame_hud = h
         t = vt + self.t0 + float(self.proj["offset"])
         img = h.render_atlas(t)
         buf = io.BytesIO()
@@ -370,7 +374,8 @@ class Studio:
             ghost["slot"] = [slot[0], slot[1] - gp.ay, slot[2], slot[3]]   # relative to the panel
         return {"pw": h.canvas_w, "ph": h.canvas_h, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
                 "video_rect": [h.vid_x0, 0, pw, ph],
-                "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()) if h.strips else None,
+                "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()),
+                "frame": f"/api/frame.png?k={id(h)}",
                 "panels": [p for p in h.describe() if p["name"] != "none"],
                 "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
                 "readout": {"lap": lap_s, "speed": speed_s, "data_time": t - self.t0,
@@ -380,7 +385,7 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -388,7 +393,7 @@ class Studio:
             self.offset_source = "set by you"
         ghost = self._ghost_ref()          # may fill in the ghost video's sync
         return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": ghost, "canvas": self.canvas(),
-                "panels": self._panel_keys(), "race": self.race_info(),
+                "panels": self._panel_keys(), "race": self.race_info(), "info": self.info(),
                 "project": {"ghost_source": self.proj.get("ghost_source")}}
 
     def sync_lap(self, n: int, vt: float) -> dict:
@@ -463,7 +468,7 @@ class Studio:
                         speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
                         race=self.race(), race_class=bool(self.proj.get("race_class")),
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
-                        strip_size=self.proj.get("strip_size") or {})
+                        strip_size=self.proj.get("strip_size") or {}, info=self.info())
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")
@@ -539,10 +544,11 @@ def pick_file(kind: str, start_dir: str | None = None) -> dict:
     so the chosen file's full path can be used directly)."""
     prompt = {"video": "Choose your video", "session": "Choose the RaceBox file (.csv or .vbo)",
               "ghost_video": "Choose the ghost lap's video",
-              "ghost_session": "Choose the ghost lap's RaceBox file"}.get(kind, "Choose a file")
+              "ghost_session": "Choose the ghost lap's RaceBox file",
+              "logo": "Choose a logo image (PNG with a clear background works best)"}.get(kind, "Choose a file")
     folder = start_dir if start_dir and Path(start_dir).is_dir() else None
     if sys.platform == "darwin":
-        types = ' of type {"public.movie"}' if kind.endswith("video") else ""
+        types = ' of type {"public.movie"}' if kind.endswith("video") else ' of type {"public.image"}' if kind == "logo" else ""
         loc = ' default location (POSIX file "{}")'.format(folder.replace('"', '\\"')) if folder else ""
         script = f'POSIX path of (choose file with prompt "{prompt}"{types}{loc})'
         # "activate" brings the dialog in front of the browser
@@ -558,7 +564,8 @@ def pick_file(kind: str, start_dir: str | None = None) -> dict:
         root = tkinter.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
-        ft = [("Video", "*.mp4 *.mov *.m4v *.insv")] if kind.endswith("video") else [("RaceBox", "*.csv *.vbo")]
+        ft = [("Video", "*.mp4 *.mov *.m4v *.insv")] if kind.endswith("video") else \
+            [("Image", "*.png *.jpg *.jpeg *.webp")] if kind == "logo" else [("RaceBox", "*.csv *.vbo")]
         path = filedialog.askopenfilename(title=prompt, initialdir=folder or os.getcwd(), filetypes=ft + [("All", "*")])
         root.destroy()
         return {"path": path} if path else {"cancelled": True}
@@ -631,6 +638,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "no video open yet"}, HTTPStatus.CONFLICT)
             elif u.path == "/api/hud":
                 self._json(self.studio.hud_frame(float(q["vt"][0]), int(float(q.get("pw", ["960"])[0]))))
+            elif u.path == "/api/frame.png":       # the themed frame round the video, for the preview
+                h = getattr(self.studio, "_frame_hud", None)
+                if h is None:
+                    self.send_error(404)
+                    return
+                buf = io.BytesIO()
+                h.frame_image().save(buf, "PNG", compress_level=1)
+                body = buf.getvalue()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Cache-Control", "max-age=3600")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif u.path == "/api/render":
                 self._json(self.studio.render_state)
             elif u.path == "/api/calls":

@@ -28,6 +28,7 @@ below; missing keys come from "carbon". Colours are [r, g, b] or [r, g, b, a].
       "texture": null | "scanlines" | "grain"
       "map_glow": true, "map_width": 5     racing line on the map
       "radio":   "classic" | "digital" | "military" | "arcade" | "vintage"   crew chief sound
+      "frame_bg": [r, g, b]   the frame round the video (default: the card colour, darker)
     }
 """
 from __future__ import annotations
@@ -100,7 +101,7 @@ THEMES: dict[str, dict] = {
         "line": (130, 255, 160, 210), "ring": (0, 30, 10, 220),
         "radius": 0, "stroke": 2.2, "stroke_color": (0, 24, 8, 190),
         "shape": "bracket", "gauge": "tape", "marker": "target", "tower": "hud",
-        "map_glow": False, "map_width": 2.5, "radio": "military", "font_scale": 0.92,
+        "map_glow": False, "map_width": 2.5, "radio": "military", "frame_bg": (4, 12, 7), "font_scale": 0.92,
         "font": ["/System/Library/Fonts/Menlo.ttc:Bold",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"],
     },
@@ -124,7 +125,7 @@ THEMES: dict[str, dict] = {
         "yellow": (172, 122, 14, 255), "red": (170, 30, 30, 255),
         "line": (44, 36, 28, 235), "ring": (196, 158, 92, 255),
         "radius": 22, "shape": "bezel", "gauge": "dial", "marker": "enamel", "tower": "pitboard",
-        "texture": "grain", "map_glow": False, "map_width": 4.5, "radio": "vintage", "font_scale": 1.0,
+        "texture": "grain", "map_glow": False, "map_width": 4.5, "radio": "vintage", "frame_bg": (70, 48, 30), "font_scale": 1.0,
         "font": ["/System/Library/Fonts/Supplemental/Rockwell.ttc:Bold",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSerifCondensed-Bold.ttf"],
     },

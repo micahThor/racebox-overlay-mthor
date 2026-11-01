@@ -59,18 +59,20 @@ def apply_project(args) -> None:
             if "=" not in item:
                 continue
             k, where = (x.strip() for x in item.split("=", 1))
-            if k not in ("laps", "map", "speed", "gforce", "ghost", "race") or \
+            if k not in ("laps", "map", "speed", "gforce", "ghost", "race",
+                         "event_logo", "track_logo", "event", "track", "date") or \
                     where not in ("left", "right", "bottom", "video"):
                 sys.exit(f"--place: don't know {item!r}")
             c = dict(lay.get(k, {}))
-            if where == "video":
-                c.pop("where", None)
-            else:
-                c["where"] = where
+            c["where"] = where
             lay[k] = c
         args.layout = lay
-        used = {c.get("where") for c in lay.values() if isinstance(c, dict)}
-        args.strips = [st for st in ("left", "right", "bottom") if st in used]
+    info = dict(proj.get("info") or {})
+    for k, a in (("event", "event_name"), ("track", "track_name"), ("date", "date"),
+                 ("event_logo", "event_logo"), ("track_logo", "track_logo")):
+        if getattr(args, a, None) is not None:
+            info[k] = getattr(args, a)
+    args.info_saved = info
     if getattr(args, "lap_items", None) is not None:
         items = [x.strip() for x in args.lap_items.split(",") if x.strip()]
         bad = [x for x in items if x not in ("time", "sectors", "last", "best")]
@@ -287,7 +289,8 @@ def _setup(args):
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
                   speed_max=args.speed_max, ghost=ghost_cfg, race=race,
                   race_class=bool(args.race_class), race_field=bool(args.race_field),
-                  strips=args.strips or [], strip_size=(args.project or {}).get("strip_size") or {})
+                  strip_size=(args.project or {}).get("strip_size") or {},
+                  info=project.session_info(tel, getattr(args, "info_saved", None)))
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -491,7 +494,8 @@ def cmd_render(args):
         print(f"trim: {clock(start)} to {clock(end) if end is not None else 'the end'} (set in the editor; "
               "--start 0 renders all)")
     out = args.output or str(Path(args.video).with_name(Path(args.video).stem + "_overlay.mp4"))
-    print(f"rendering {vinfo['width']}x{vinfo['height']} @ {float(vinfo['fps']):.2f} fps -> {out}")
+    print(f"rendering {hud.canvas_w}x{hud.canvas_h} ({vinfo['width']}x{vinfo['height']} video in the frame) "
+          f"@ {float(vinfo['fps']):.2f} fps -> {out}")
     radio = None
     args._duration = vinfo["duration"]
     if args.crew_chief:
@@ -559,9 +563,14 @@ def main(argv=None):
         s.add_argument("--lap-items", metavar="LIST", default=None,
                        help="what the lap timer shows: any of time,sectors,last,best (default all)")
         s.add_argument("--place", metavar="LIST", default=None,
-                       help="put panels in strips beside/under the video, e.g. race=right,laps=bottom "
-                            "(panels: laps,map,speed,gforce,ghost,race; strips: left,right,bottom, or video). "
-                            "The output frame grows to fit the strips used.")
+                       help="put panels in the frame round the video, e.g. race=right,laps=bottom "
+                            "(panels: laps,map,speed,gforce,ghost,race,event_logo,track_logo,event,track,date; "
+                            "places: left,right,bottom, or video)")
+        s.add_argument("--event-name", metavar="TEXT", help="the event (the organisation running it); '' = off")
+        s.add_argument("--track-name", metavar="TEXT", help="the track's name (default: from the RaceBox file); '' = off")
+        s.add_argument("--date", metavar="TEXT", help="date and time to show (default: when the session started); '' = off")
+        s.add_argument("--event-logo", metavar="IMAGE", help="the event's logo (PNG with a clear background is best)")
+        s.add_argument("--track-logo", metavar="IMAGE", help="the track's logo")
         s.add_argument("--map-rotate", type=int, choices=[0, 90, 180, 270], default=None, metavar="DEG",
                        help="turn the track map clockwise: 0, 90, 180 or 270")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",

@@ -71,6 +71,10 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 0
   align-self: center; max-width: 100%; }
 .stage video { display: block; width: 100%; height: auto; }
 .overlay { position: absolute; inset: 0; }
+.frameimg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; display: none; }
+.info-row { display: grid; grid-template-columns: 96px 1fr auto; gap: 8px; align-items: center; margin: 6px 0; }
+.info-row input[type=text] { background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+.info-row .file { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel { position: absolute; background-repeat: no-repeat; cursor: grab; touch-action: none; }
 .panel:hover { outline: 1px dashed rgba(242,169,0,.8); outline-offset: 2px; }
 .panel.drag { cursor: grabbing; outline: 2px solid var(--amber); }
@@ -247,6 +251,7 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
   <section class="left">
     <div class="stage" id="stage">
       <video id="vid" preload="auto" playsinline muted></video>
+      <img class="frameimg" id="frameImg" alt="">
       <div class="overlay" id="overlay"></div>
       <div class="nodata" id="nodata">No RaceBox data at this point in the video</div>
     </div>
@@ -349,18 +354,31 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
       <div class="row"><input type="range" id="scale" min="0.6" max="1.6" step="0.05" style="flex:1">
         <span class="pct" id="scaleV"></span></div>
 
-      <h2>Strips beside the video</h2>
-      <p class="hint">Extra space around the picture for panels, so they don't cover it. The output gets
-        bigger to fit: a side strip makes an upright video 4:5 or a wide one 21:9; the bottom strip is a slim
-        bar for a row of small panels. Put a panel in a strip below, or drag it there on the video.</p>
-      <div class="seg" id="stripBtns" role="group" aria-label="Strips">
-        <button data-strip="left">Left</button><button data-strip="right">Right</button><button data-strip="bottom">Bottom</button></div>
+      <h2>Frame round the video</h2>
+      <p class="hint">Strips left, right and under the picture, styled as one frame in the theme, for panels
+        that shouldn't cover the picture. Make each strip wider or narrower here. Put a panel in a strip
+        below, or drag it there on the video.</p>
       <div id="stripSizes"></div>
 
       <h2>Panels</h2>
       <p>Drag panels on the video to move them. Hover a panel for its handles: the corner resizes it; the side and bottom handles make the map, standings, lap timer and ghost wider or taller on their own.</p>
       <div id="panelList"></div>
       <div class="row" style="margin-top:12px"><button id="resetLayout">Reset layout</button></div>
+
+      <h2>Event &amp; track</h2>
+      <p class="hint">Each one is its own panel: place and size it in the list above. Leave a box empty to
+        leave it off. The track name and date start from your RaceBox file.</p>
+      <div class="info-row"><label for="inEvent">Event name</label>
+        <input type="text" id="inEvent" placeholder="who's running the event"><span></span></div>
+      <div class="info-row"><label for="inTrack">Track name</label>
+        <input type="text" id="inTrack" placeholder="track"><button class="link" id="inTrackReset" title="Use the name from the RaceBox file">Reset</button></div>
+      <div class="info-row"><label for="inDate">Date &amp; time</label>
+        <input type="text" id="inDate" placeholder="date and time"><button class="link" id="inDateReset" title="Use when the session started">Reset</button></div>
+      <div class="info-row"><span>Event logo</span><span class="file" id="logoEvent">none</span>
+        <span><button data-logo="event_logo">Choose…</button> <button class="link" data-logo-off="event_logo">Remove</button></span></div>
+      <div class="info-row"><span>Track logo</span><span class="file" id="logoTrack">none</span>
+        <span><button data-logo="track_logo">Choose…</button> <button class="link" data-logo-off="track_logo">Remove</button></span></div>
+      <p class="hint">A PNG with a clear background looks best on the frame.</p>
     </div>
 
     <div class="pane" id="pane-cc">
@@ -407,8 +425,8 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <h2>Map &amp; standings panel</h2>
         <div class="seg" id="rcSide" role="group" aria-label="Where the race panel goes">
           <button data-side="">On the video</button><button data-side="left">Left</button><button data-side="right">Right</button><button data-side="bottom">Bottom</button></div>
-        <p class="hint" style="margin-top:6px">Left, right or bottom puts it in a strip off the picture (the output gets
-          bigger to fit). Other panels can go in strips too, in Look &amp; layout.</p>
+        <p class="hint" style="margin-top:6px">Left, right or bottom puts it in that strip of the frame round the
+          picture. Other panels can go in strips too, in Look &amp; layout.</p>
         <label class="row" style="margin-top:10px;gap:8px"><input type="checkbox" id="rcClass">
           Standings show only my class</label>
         <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="rcField">
@@ -472,6 +490,8 @@ async function refreshHud() {
     const h = await api(`/api/hud?vt=${vid.currentTime.toFixed(3)}&pw=${pw}`);
     await drawPanels(h);
     stage.style.background = h.side_colour || "";
+    const fi = $("#frameImg");
+    if (h.frame && fi.dataset.src !== h.frame) { fi.dataset.src = h.frame; fi.src = h.frame; fi.style.display = "block"; }
     $("#readout").innerHTML = `<b>${h.readout.lap}</b><br>${h.readout.speed}`;
     $("#nodata").style.display = h.readout.in_data ? "none" : "block";
   } catch (e) { console.error(e); }
@@ -582,7 +602,7 @@ function attachDrag(el) {
       cfg.where = strip;
       cfg.side_order = +((strip === "bottom" ? cx / stage.clientWidth : cy / stage.clientHeight)).toFixed(3);
     } else {                                // on the video: where it was dropped
-      delete cfg.where; delete cfg.side_order;
+      cfg.where = "video"; delete cfg.side_order;
       const x = Math.min(Math.max(el.offsetLeft, vr.x), vr.x + vr.w - el.offsetWidth);
       const y = Math.min(Math.max(el.offsetTop, 0), vr.h - el.offsetHeight);
       cfg.x = +((x - vr.x) / vr.w).toFixed(4);                    // a fraction of the video
@@ -628,10 +648,11 @@ async function save(changes) {
     if (r.ghost_ref !== undefined) S.ghost_ref = r.ghost_ref;
     if (r.project && r.project.ghost_source !== undefined) P.ghost_source = r.project.ghost_source;
     if (r.race) S.race = r.race;
+    if (r.info) S.info = r.info;
     if (r.canvas) { const old = JSON.stringify(S.video.canvas); S.video.canvas = r.canvas;
                     if (JSON.stringify(r.canvas) !== old) { fitStage(); renderLook(); } }
     const raceCh = ["race", "race_source", "race_number", "race_class", "race_field", "strips"].some(k => k in changes);
-    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || "ghost_source" in changes || raceCh) renderLook(); }
+    if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || "ghost_source" in changes || "info" in changes || raceCh) renderLook(); }
     if (raceCh || "call_settings" in changes) { renderRace(); renderLapTable(); }
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
     $("#saved").classList.add("ok");
@@ -863,15 +884,16 @@ document.querySelectorAll("[data-gn]").forEach(b => b.addEventListener("click", 
   save({ ghost_source: src });
 }));
 
-document.querySelectorAll("#stripBtns button").forEach(b => b.addEventListener("click", () => {
-  const on = new Set(P.strips || []);
-  on.has(b.dataset.strip) ? on.delete(b.dataset.strip) : on.add(b.dataset.strip);
-  save({ strips: ["left", "right", "bottom"].filter(x => on.has(x)) });
-}));
+/* where a panel goes when its layout doesn't say (as in hud.py DEFAULT_WHERE) */
+const DEFAULT_WHERE = { race: "right", event_logo: "bottom", track_logo: "bottom", event: "left", track: "left", date: "left" };
+function whereOf(key) {
+  const w = (P.layout[key] || {}).where ?? DEFAULT_WHERE[key] ?? "";
+  return ["left", "right", "bottom"].includes(w) ? w : "";
+}
 function renderLook() {
-  document.querySelectorAll("#stripBtns button").forEach(b => b.setAttribute("aria-pressed", (P.strips || []).includes(b.dataset.strip)));
+  renderInfo();
   const sz = $("#stripSizes"); sz.innerHTML = "";
-  for (const st of (P.strips || [])) {                 // how big each strip is
+  for (const st of ["left", "right", "bottom"]) {                 // how big each strip is
     const v = (P.strip_size || {})[st] || 1;
     const row = document.createElement("div"); row.className = "sens";
     row.innerHTML = `<div class="top"><span>${st[0].toUpperCase() + st.slice(1)} strip ${st === "bottom" ? "height" : "width"}</span>
@@ -906,7 +928,7 @@ function renderLook() {
       <input type="range" min="0.5" max="2" step="0.05" value="${sc}" aria-label="${p.label} size">
       <span class="pct">${Math.round(sc * 100)}%</span>`;
     const strips = Object.keys(canvas().strips || {});
-    if (strips.includes(cfg.where)) {      // in a strip: the slider is a share of the strip (up to 100%)
+    if (whereOf(p.key)) {                  // in a strip: the slider is a share of the strip (up to 100%)
       const r_ = row.querySelector("input[type=range]");
       r_.max = "1"; r_.min = "0.3";
       if (+r_.value > 1) { r_.value = 1; row.querySelector(".pct").textContent = "100% of the strip"; }
@@ -916,10 +938,10 @@ function renderLook() {
       const sel = document.createElement("select"); sel.className = "where"; sel.setAttribute("aria-label", p.label + " goes");
       sel.innerHTML = `<option value="">On the video</option>` + strips.map(st =>
         `<option value="${st}">${st[0].toUpperCase() + st.slice(1)} strip</option>`).join("");
-      sel.value = strips.includes(cfg.where) ? cfg.where : "";
+      sel.value = whereOf(p.key);
       sel.addEventListener("change", () => {
         const c = Object.assign({}, P.layout[p.key] || {});
-        if (sel.value) c.where = sel.value; else { delete c.where; delete c.side_order; }
+        if (sel.value) c.where = sel.value; else { c.where = "video"; delete c.side_order; }
         P.layout[p.key] = c; save({ layout: P.layout });
       });
       row.appendChild(sel);
@@ -972,6 +994,32 @@ function renderLook() {
     list.appendChild(row);
   }
 }
+/* ---------- event & track: names, date and logos ---------- */
+function renderInfo() {
+  const I = S.info || {};
+  for (const [id, k] of [["#inEvent", "event"], ["#inTrack", "track"], ["#inDate", "date"]])
+    if (document.activeElement !== $(id)) $(id).value = I[k] || "";
+  for (const [id, k] of [["#logoEvent", "event_logo"], ["#logoTrack", "track_logo"]]) {
+    $(id).textContent = I[k] ? I[k].split("/").pop() : "none"; $(id).title = I[k] || "";
+  }
+}
+function saveInfo(ch) {
+  P.info = Object.assign({}, P.info || {}, ch);
+  for (const k of Object.keys(P.info)) if (P.info[k] === undefined) delete P.info[k];
+  save({ info: P.info });
+}
+for (const [id, k] of [["#inEvent", "event"], ["#inTrack", "track"], ["#inDate", "date"]])
+  $(id).addEventListener("change", e => saveInfo({ [k]: e.target.value.trim() }));
+$("#inTrackReset").addEventListener("click", () => saveInfo({ track: undefined }));
+$("#inDateReset").addEventListener("click", () => saveInfo({ date: undefined }));
+document.querySelectorAll("[data-logo]").forEach(b => b.addEventListener("click", async () => {
+  const r = await api("/api/pick", { kind: "logo" });
+  const lbl = b.dataset.logo === "event_logo" ? $("#logoEvent") : $("#logoTrack");
+  if (r.path) saveInfo({ [b.dataset.logo]: r.path });
+  else if (r.error) { lbl.textContent = r.error; lbl.title = r.error; }
+}));
+document.querySelectorAll("[data-logo-off]").forEach(b => b.addEventListener("click", () => saveInfo({ [b.dataset.logoOff]: "" })));
+
 function setPanel(key, changes) {
   P.layout[key] = Object.assign({}, P.layout[key] || {}, changes);
   if (P.layout[key].visible === true) delete P.layout[key].visible;
@@ -1142,8 +1190,8 @@ function renderRace() {
   sel.disabled = !R.riders.length;
   sel.value = P.race_number || "";
   $("#rcClass").checked = !!P.race_class;
-  const rw = ((P.layout || {}).race || {}).where || "";
-  document.querySelectorAll("#rcSide button").forEach(b => b.setAttribute("aria-pressed", ((P.strips || []).includes(rw) ? rw : "") === b.dataset.side));
+  const rw = whereOf("race");
+  document.querySelectorAll("#rcSide button").forEach(b => b.setAttribute("aria-pressed", rw === b.dataset.side));
   $("#rcField").checked = P.race_field !== false;
   const info = $("#rcInfo");
   if (R.loaded) {
@@ -1177,10 +1225,9 @@ $("#rcRider").addEventListener("change", e => saveRace({ race_number: e.target.v
 $("#rcClass").addEventListener("change", e => save({ race_class: e.target.checked }));
 document.querySelectorAll("#rcSide button").forEach(b => b.addEventListener("click", () => {
   const st = b.dataset.side, c = Object.assign({}, P.layout.race || {});
-  const strips = new Set(P.strips || []);
-  if (st) { c.where = st; strips.add(st); } else { delete c.where; delete c.side_order; }
+  if (st) c.where = st; else { c.where = "video"; delete c.side_order; }
   P.layout.race = c;
-  save({ layout: P.layout, strips: ["left", "right", "bottom"].filter(x => strips.has(x)) }); renderRace();
+  save({ layout: P.layout }); renderRace();
 }));
 $("#rcField").addEventListener("change", e => save({ race_field: e.target.checked }));
 

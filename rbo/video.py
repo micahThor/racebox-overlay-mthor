@@ -8,6 +8,7 @@ import os
 import queue
 import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -148,11 +149,17 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     parts = [f"[1:v]split={len(hud.panels)}" + "".join(f"[a{i}]" for i in range(len(hud.panels)))]
     prev = "0:v"
     out_w, out_h = info["width"], info["height"]
-    if getattr(hud, "strips", None):           # strips beside/under the video: a bigger frame
-        c = "".join(f"{v:02x}" for v in hud.side_colour())
-        out_w, out_h = hud.canvas_w, hud.canvas_h
-        parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:0:color=0x{c}[base]")
-        prev = "base"
+    # the frame round the video: pad to the full size, then lay the themed frame
+    # (a still image, clear over the picture) on top
+    c = "".join(f"{v:02x}" for v in hud.side_colour())
+    out_w, out_h = hud.canvas_w, hud.canvas_h
+    frame_dir = tempfile.mkdtemp(prefix="rbo-frame-")
+    frame_png = os.path.join(frame_dir, "frame.png")
+    hud.frame_image().save(frame_png)
+    fi = 3 if radio else 2                     # the frame's input number
+    parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:0:color=0x{c}[pad]")
+    parts.append(f"[pad][{fi}:v]overlay=0:0:shortest=1:format=auto[base]")
+    prev = "base"
     for i, p in enumerate(hud.panels):
         parts.append(f"[a{i}]crop={p.vw}:{p.vh}:{p.vx}:{p.ay + p.vy}[p{i}]")
         nxt = f"v{i}"
@@ -165,6 +172,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{hud.atlas_w}x{hud.atlas_h}",
            "-r", f"{fps.numerator}/{fps.denominator}", "-i", "pipe:0",
            *(["-i", radio] if radio else []),
+           "-loop", "1", "-framerate", f"{fps.numerator}/{fps.denominator}", "-i", frame_png,
            "-filter_complex", ";".join(parts + _radio_mix(info["has_audio"]) if radio else parts),
            "-map", "[vout]"]
     if radio:
@@ -241,6 +249,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         threads[0].join()
         proc.wait()
         threads[1].join(timeout=5)
+    shutil.rmtree(frame_dir, ignore_errors=True)
     if progress is show:
         print()
     if cancel is not None and cancel.is_set():

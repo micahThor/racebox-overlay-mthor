@@ -166,7 +166,7 @@ class Hud(StyleMixin):
                  layout: dict | None = None, speed_max: float | None = None,
                  supersample: int = 2, ghost=None, race=None,
                  race_class: bool = False, race_field: bool = True, sidebar: str | None = None,
-                 strips=None, strip_size=None):
+                 strips=None, strip_size=None, info=None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
@@ -174,7 +174,10 @@ class Hud(StyleMixin):
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
                          race_class=race_class, race_field=race_field, sidebar=sidebar,
-                         strips=strips, strip_size=strip_size)
+                         strips=strips, strip_size=strip_size, info=info)
+        # info: the event and track names, the date (text) and the event and track
+        # logos (image paths): {"event", "track", "date", "event_logo", "track_logo"}
+        self.info = {k: v for k, v in (info or {}).items() if v}
         self.race_field = bool(race_field)
         # race: an rbo.race.Race for the standings tower; race_class: only your class
         self.race = race
@@ -189,21 +192,19 @@ class Hud(StyleMixin):
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
-        # Strips: extra space beside (left, right) and/or under (bottom) the video,
-        # so panels can sit off the picture. Any combination can be on; a panel
-        # goes in one with layout {"where": "left" | "right" | "bottom"}. The
-        # output frame grows to make room: canvas_w x canvas_h, with the video at
-        # (vid_x0, 0).
-        if strips is None:
-            strips = [sidebar] if sidebar else []
-        self.strips = [st for st in ("left", "right", "bottom") if st in set(strips or [])]
-        self.sidebar = self.strips[0] if self.strips else None       # (older callers)
+        # Strips: the frame around the video. Left, right and bottom strips are
+        # always there (their sizes can change); a panel goes in one with layout
+        # {"where": "left" | "right" | "bottom"} ("video" or no setting: on the
+        # picture). The output frame is canvas_w x canvas_h, with the video at
+        # (vid_x0, 0). (`strips` and `sidebar` are accepted for older callers.)
+        self.strips = ["left", "right", "bottom"]
+        self.sidebar = "right"
         mult = lambda st: min(max(float((strip_size or {}).get(st, 1.0) or 1.0), 0.4), 2.5)
         even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(width, height)
-        self.left_w = even(sw * mult("left")) if "left" in self.strips else 0
-        self.right_w = even(sw * mult("right")) if "right" in self.strips else 0
-        self.bottom_h = even(bottom_height(width, height) * mult("bottom")) if "bottom" in self.strips else 0
+        self.left_w = even(sw * mult("left"))
+        self.right_w = even(sw * mult("right"))
+        self.bottom_h = even(bottom_height(width, height) * mult("bottom"))
         self.canvas_w, self.canvas_h = width + self.left_w + self.right_w, height + self.bottom_h
         self.vid_x0 = self.left_w
         self.base_k = min(width, height) / 1080 * scale        # output px per reference px
@@ -344,11 +345,16 @@ class Hud(StyleMixin):
                width=max(1, self.S(1.2)))
 
     def side_colour(self) -> tuple:
-        """The strips' background: the theme's card colour, solid and a shade darker."""
-        bg = self.C["bg"]
-        if bg[3] == 0:                                 # card-less themes
-            return (14, 16, 20)
-        return tuple(int(v * 0.8) for v in bg[:3])
+        """The frame's base colour (see frame.py)."""
+        from .frame import frame_colour
+        return frame_colour(self.theme)
+
+    def frame_image(self) -> Image.Image:
+        """The themed frame round the video, at output size (clear over the picture)."""
+        if getattr(self, "_frame", None) is None:
+            from .frame import draw_frame
+            self._frame = draw_frame(self)
+        return self._frame
 
     def _card_visible(self, img, d, p: Panel, fringe):
         """The card, drawn only around the visible part of the panel."""
@@ -490,6 +496,61 @@ class Hud(StyleMixin):
         self._lap_geom = g
         return g["w"], g["h"]
 
+    # ------------------------------------------------------------ event info panels
+
+    INFO_TEXT = {"event": "EVENT", "track": "TRACK", "date": "DATE"}
+    LOGO_H = 140            # a logo's reference height
+
+    def _info_specs(self) -> list:
+        """The event and track logos and the event name, track name and date panels
+        (each only when it has something to show)."""
+        out = []
+        self._logos = {}
+        for key in ("event_logo", "track_logo"):
+            path = self.info.get(key)
+            if not path:
+                continue
+            try:
+                im = Image.open(Path(str(path)).expanduser())
+                im.load()
+                im = im.convert("RGBA")
+            except (OSError, ValueError):
+                continue
+            bb = im.getchannel("A").getbbox()            # leave off empty transparent margins
+            if bb:
+                im = im.crop(bb)
+            self._logos[key] = im
+            a = im.width / max(im.height, 1)
+            rh = self.LOGO_H
+            rw = min(max(rh * a, 40), 600)
+            if rh * a > 600:                               # a very wide logo: keep its shape
+                rh = 600 / a
+            out.append((key, "logo", rw, rh, "bl" if key == "event_logo" else "br", lambda *a: None))
+        texts = [k for k in ("event", "track", "date") if str(self.info.get(k) or "").strip()]
+        # all the same width (the widest one's), so they line up and share a text size
+        need = max([self.measure(str(self.info[k]).strip(), 30) / self.k + 52 for k in texts] or [0])
+        rw = min(max(need, 220), 640)
+        for key in texts:
+            out.append((key, "text", rw, 92, "tl", lambda *a: None))
+        return out
+
+    def _static_logo(self, img, d, p):
+        im = self._logos.get(p.key)
+        if im is None:
+            return
+        im = im.resize((p.iw, p.ih), Image.LANCZOS)
+        img.alpha_composite(im, (0, p.iay))
+
+    def _static_text(self, img, d, p):
+        S, pad = self.S, self.S(24)
+        txt = str(self.info.get(p.key) or "").strip()
+        self.text(d, pad, p.iay + S(34), self.INFO_TEXT.get(p.key, ""), 15, "dim", track=2)
+        size = 30
+        room = p.iw - 2 * pad
+        while size > 14 and self.measure(txt, size) > room:   # long text: smaller, to fit
+            size -= 1
+        self.text(d, pad, p.iay + S(74), txt, size, "white")
+
     def _layout(self) -> list[Panel]:
         W, H = self.W, self.H
         specs = []     # (key, name, ref_w, ref_h, corner, draw)
@@ -554,6 +615,8 @@ class Hud(StyleMixin):
             else:
                 specs.append(("race", "race", RACE_W, 70 + self.race_key_h + self.race_rows * RACE_RH, "ml",
                               self._draw_race))
+
+        specs += self._info_specs()
 
         # Portrait (a helmet camera held upright, or a phone-shaped export): keep the
         # middle of the frame, the track ahead, clear. Timing and map go in the sky
@@ -626,7 +689,13 @@ class Hud(StyleMixin):
                                 vx=L, vy=T, vw=w, vh=h))
         return panels
 
-    SIDE_ORDER = ("laps", "race", "map", "ghost", "speed", "gforce")
+    SIDE_ORDER = ("event_logo", "event", "track", "date", "laps", "race", "map", "ghost", "speed", "gforce",
+                  "track_logo")
+    # where a panel goes when the layout doesn't say: the race panel in the right
+    # strip, the logos at either end of the bottom strip, the names and date at
+    # the top of the left strip; the rest on the video
+    DEFAULT_WHERE = {"race": "right", "event_logo": "bottom", "track_logo": "bottom",
+                     "event": "left", "track": "left", "date": "left"}
 
     def strip_rect(self, st: str) -> tuple:
         """(x, y, w, h) of a strip in the output frame."""
@@ -638,7 +707,7 @@ class Hud(StyleMixin):
 
     def in_side(self, key: str) -> str:
         """The strip a panel sits in, or "" if it's on the video."""
-        w = (self.layout.get(key, {}) or {}).get("where")
+        w = (self.layout.get(key, {}) or {}).get("where", self.DEFAULT_WHERE.get(key))
         if w == "side":                          # older setting: the first side strip
             w = next((st for st in self.strips if st != "bottom"), "bottom")
         return w if w in self.strips else ""
@@ -666,6 +735,8 @@ class Hud(StyleMixin):
                 share = min(max(float((self.layout.get(key, {}) or {}).get("scale", 1.0) or 1.0), 0.2), 1.0)
                 if st == "bottom":
                     k = (sh - 2 * m) / max(rh - T - B, 1) * share
+                    if name == "text":           # names and the date: no bigger than a strip's width would make them
+                        k = min(k, (self.left_w - 2 * m) / max(rw, 1) * share)
                     items.append((key, k, (rw - L - R) * k))
                 else:
                     k = (sw - 2 * m) / max(rw - L - R, 1) * share
@@ -694,6 +765,10 @@ class Hud(StyleMixin):
             total = sw_ + gw_ + (gap * 2 if sw_ and gw_ else 0)
             x0 = (W - total) / 2
             return (x0 if key == "speed" else x0 + total - w), H - m - h
+        if key in ("event_logo", "event", "track", "date"):
+            return m, H * 0.45 + {"event_logo": 0, "event": 1, "track": 2, "date": 3}[key] * (h + gap)
+        if key == "track_logo":
+            return W - m - w, H * 0.45
         return (W - w) / 2, H * 0.4
 
     def describe(self) -> list[dict]:
@@ -721,7 +796,7 @@ class Hud(StyleMixin):
             if p.name == "none":
                 continue
             self._use(p)
-            if p.name != "ghost":          # the ghost's card only shows while it's active
+            if p.name not in ("ghost", "logo"):   # the ghost's card only shows while it's active; logos have none
                 self._card_visible(img, d, p, fringe)
                 self.apply_texture(img, p)
             getattr(self, f"_static_{p.name}", lambda *a: None)(img, d, p)
@@ -928,12 +1003,9 @@ class Hud(StyleMixin):
             arr = np.array(atlas)
             self.paste_ghost(arr, ghost_frame(g.ref_vt, w, h))
             atlas = Image.fromarray(arr, "RGBA")
-        if self.strips:
-            canvas = Image.new("RGBA", (self.canvas_w, self.canvas_h), self.side_colour() + (255,))
-            canvas.paste(frame.convert("RGB"), (self.vid_x0, 0))
-            out = canvas
-        else:
-            out = frame.convert("RGBA")
+        out = Image.new("RGBA", (self.canvas_w, self.canvas_h), self.side_colour() + (255,))
+        out.paste(frame.convert("RGB"), (self.vid_x0, 0))
+        out.alpha_composite(self.frame_image())
         for p in self.panels:
             out.alpha_composite(atlas.crop((p.vx, p.ay + p.vy, p.vx + p.vw, p.ay + p.vy + p.vh)), (p.x, p.y))
         return out.convert("RGB")
