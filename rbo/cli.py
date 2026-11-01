@@ -49,10 +49,28 @@ def apply_project(args) -> None:
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
     for k in ("units", "scale", "theme", "track", "sectors", "speed_max",
               "crew_chief", "voice", "voice_rate", "call_settings", "ghost",
-              "race", "race_source", "race_number", "race_class", "race_field", "race_side"):
+              "race", "race_source", "race_number", "race_class", "race_field", "strips"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
+    if getattr(args, "place", None):
+        lay = dict(args.layout)
+        for item in args.place.split(","):
+            if "=" not in item:
+                continue
+            k, where = (x.strip() for x in item.split("=", 1))
+            if k not in ("laps", "map", "speed", "gforce", "ghost", "race") or \
+                    where not in ("left", "right", "bottom", "video"):
+                sys.exit(f"--place: don't know {item!r}")
+            c = dict(lay.get(k, {}))
+            if where == "video":
+                c.pop("where", None)
+            else:
+                c["where"] = where
+            lay[k] = c
+        args.layout = lay
+        used = {c.get("where") for c in lay.values() if isinstance(c, dict)}
+        args.strips = [st for st in ("left", "right", "bottom") if st in used]
     if getattr(args, "lap_items", None) is not None:
         items = [x.strip() for x in args.lap_items.split(",") if x.strip()]
         bad = [x for x in items if x not in ("time", "sectors", "last", "best")]
@@ -269,7 +287,7 @@ def _setup(args):
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
                   speed_max=args.speed_max, ghost=ghost_cfg, race=race,
                   race_class=bool(args.race_class), race_field=bool(args.race_field),
-                  sidebar=args.race_side if args.race_side in ("left", "right") else None)
+                  strips=args.strips or [])
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -540,6 +558,10 @@ def main(argv=None):
                         help="that video's sync (default: saved by the editor, else auto-sync)")
         s.add_argument("--lap-items", metavar="LIST", default=None,
                        help="what the lap timer shows: any of time,sectors,last,best (default all)")
+        s.add_argument("--place", metavar="LIST", default=None,
+                       help="put panels in strips beside/under the video, e.g. race=right,laps=bottom "
+                            "(panels: laps,map,speed,gforce,ghost,race; strips: left,right,bottom, or video). "
+                            "The output frame grows to fit the strips used.")
         s.add_argument("--map-rotate", type=int, choices=[0, 90, 180, 270], default=None, metavar="DEG",
                        help="turn the track map clockwise: 0, 90, 180 or 270")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",
@@ -571,9 +593,6 @@ def main(argv=None):
         rc.add_argument("--race-number", metavar="N", default=None, help="your start number in that race")
         rc.add_argument("--race-class", action=argparse.BooleanOptionalAction, default=None,
                         help="tower shows only your class")
-        rc.add_argument("--race-side", choices=["left", "right", "off"], default=None,
-                        help="put the map and standings beside the video, widening the output "
-                             "(upright video to 4:5, wide video to 21:9)")
         rc.add_argument("--race-field", action=argparse.BooleanOptionalAction, default=None,
                         help="show the other riders as dots on the map (default on)")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")

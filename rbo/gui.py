@@ -160,18 +160,27 @@ class Studio:
         self._race_k = key
         return self._race
 
-    def _side(self) -> str | None:
-        """'left'/'right' when the race panel goes beside the video."""
-        side = self.proj.get("race_side")
-        return side if side in ("left", "right") and self.race() is not None else None
+    def _strips(self) -> list:
+        """Which strips beside/under the video are on."""
+        return [st for st in ("left", "right", "bottom") if st in (self.proj.get("strips") or [])]
 
     def canvas(self) -> dict:
-        """The output frame at full size: wider than the video with a race side panel."""
-        from .hud import sidebar_width
+        """The output frame at full size, with its strips (output pixels)."""
+        from .hud import bottom_height, sidebar_width
         W, H = self.vinfo["width"], self.vinfo["height"]
-        side = self._side()
-        sw = sidebar_width(W, H) if side else 0
-        return {"w": W + sw, "h": H, "vx": sw if side == "left" else 0, "vw": W, "side": side}
+        st = self._strips()
+        sw = sidebar_width(W, H)
+        lw, rw = (sw if "left" in st else 0), (sw if "right" in st else 0)
+        bh = bottom_height(W, H) if "bottom" in st else 0
+        cw = W + lw + rw
+        rects = {}
+        if lw:
+            rects["left"] = [0, 0, lw, H]
+        if rw:
+            rects["right"] = [lw + W, 0, rw, H]
+        if bh:
+            rects["bottom"] = [0, H, cw, bh]
+        return {"w": cw, "h": H + bh, "vx": lw, "vw": W, "vh": H, "strips": rects}
 
     def _traffic_s(self) -> float:
         return float((self.proj.get("call_settings") or {}).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
@@ -203,7 +212,7 @@ class Studio:
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True),
-                          self._side()],
+                          self._strips()],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -215,7 +224,7 @@ class Studio:
                         layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"),
                         ghost=self.ghost_cfg(), race=self.race(),
                         race_class=bool(self.proj.get("race_class")),
-                        race_field=self.proj.get("race_field", True) is not False, sidebar=self._side())
+                        race_field=self.proj.get("race_field", True) is not False, strips=self._strips())
                 self._huds[key] = h
             return h
 
@@ -355,9 +364,9 @@ class Studio:
                  "src": "/ghost-video" if h.ghost is not None and h.ghost.external else "/video"}
         if slot and gp:
             ghost["slot"] = [slot[0], slot[1] - gp.ay, slot[2], slot[3]]   # relative to the panel
-        return {"pw": h.canvas_w, "ph": ph, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
+        return {"pw": h.canvas_w, "ph": h.canvas_h, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
                 "video_rect": [h.vid_x0, 0, pw, ph],
-                "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()) if h.sidebar else None,
+                "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()) if h.strips else None,
                 "panels": [p for p in h.describe() if p["name"] != "none"],
                 "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
                 "readout": {"lap": lap_s, "speed": speed_s, "data_time": t - self.t0,
@@ -367,7 +376,7 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field", "race_side"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "strips"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -449,7 +458,7 @@ class Studio:
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
                         speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
                         race=self.race(), race_class=bool(self.proj.get("race_class")),
-                        race_field=self.proj.get("race_field", True) is not False, sidebar=self._side())
+                        race_field=self.proj.get("race_field", True) is not False, strips=self._strips())
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")

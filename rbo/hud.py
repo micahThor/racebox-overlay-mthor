@@ -55,11 +55,27 @@ MAP_PAD = 24            # space between the track and the map card's edge
 
 
 def sidebar_width(width: int, height: int) -> int:
-    """Width of the race side panel added beside a video: enough to make an
-    upright video 4:5 and a wide one 21:9 (even, and never tiny)."""
+    """Width of the side panel added beside a video: enough to make an upright
+    video 4:5 and a wide one 21:9 (even, and never tiny)."""
     target = height * 4 / 5 if height > width * 1.15 else height * 21 / 9
     side = max(target - width, 0.3 * min(width, height))
     return int(round(side / 2)) * 2
+
+
+def bottom_height(width: int, height: int) -> int:
+    """Height of the bottom panel added under a video: a wide video becomes 4:3;
+    an upright one gets a band a third of its width tall (even)."""
+    band = width * 3 / 4 - height if height <= width * 1.15 else width * 0.36
+    return int(round(max(band, 0.25 * min(width, height)) / 2)) * 2
+
+
+def strip_size(width: int, height: int, where: str | None) -> tuple[int, int]:
+    """(extra width, extra height) the side or bottom panel adds to the frame."""
+    if where in ("left", "right"):
+        return sidebar_width(width, height), 0
+    if where == "bottom":
+        return 0, bottom_height(width, height)
+    return 0, 0
 
 
 def find_font(override=None) -> str | None:
@@ -149,14 +165,16 @@ class Hud(StyleMixin):
                  hide: set[str] | None = None, theme: str | dict | None = None,
                  layout: dict | None = None, speed_max: float | None = None,
                  supersample: int = 2, ghost=None, race=None,
-                 race_class: bool = False, race_field: bool = True, sidebar: str | None = None):
+                 race_class: bool = False, race_field: bool = True, sidebar: str | None = None,
+                 strips=None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
         self.spec = dict(tel=tel, timing=timing, width=width, height=height, units=units,
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
-                         race_class=race_class, race_field=race_field, sidebar=sidebar)
+                         race_class=race_class, race_field=race_field, sidebar=sidebar,
+                         strips=strips)
         self.race_field = bool(race_field)
         # race: an rbo.race.Race for the standings tower; race_class: only your class
         self.race = race
@@ -171,15 +189,21 @@ class Hud(StyleMixin):
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
-        # Race side panel: the output is wider than the video and the race panel
-        # (map + standings) sits beside it instead of on the picture. canvas_w is
-        # the output width, vid_x0 where the video starts in it.
-        hidden_race = (layout or {}).get("race", {}).get("visible") is False or "race" in (hide or set())
-        self.sidebar = sidebar if sidebar in ("left", "right") and race is not None and not hidden_race else None
-        self.side_w = sidebar_width(width, height) if self.sidebar else 0
-        self.canvas_w = width + self.side_w
-        self.vid_x0 = self.side_w if self.sidebar == "left" else 0
-        self.side_x0 = 0 if self.sidebar == "left" else width
+        # Strips: extra space beside (left, right) and/or under (bottom) the video,
+        # so panels can sit off the picture. Any combination can be on; a panel
+        # goes in one with layout {"where": "left" | "right" | "bottom"}. The
+        # output frame grows to make room: canvas_w x canvas_h, with the video at
+        # (vid_x0, 0).
+        if strips is None:
+            strips = [sidebar] if sidebar else []
+        self.strips = [st for st in ("left", "right", "bottom") if st in set(strips or [])]
+        self.sidebar = self.strips[0] if self.strips else None       # (older callers)
+        sw = sidebar_width(width, height)
+        self.left_w = sw if "left" in self.strips else 0
+        self.right_w = sw if "right" in self.strips else 0
+        self.bottom_h = bottom_height(width, height) if "bottom" in self.strips else 0
+        self.canvas_w, self.canvas_h = width + self.left_w + self.right_w, height + self.bottom_h
+        self.vid_x0 = self.left_w
         self.base_k = min(width, height) / 1080 * scale        # output px per reference px
         self.k = self.base_k * self.ss
         self.units = units
@@ -318,8 +342,7 @@ class Hud(StyleMixin):
                width=max(1, self.S(1.2)))
 
     def side_colour(self) -> tuple:
-        """The race side panel's background: the theme's card colour, solid and a
-        shade darker."""
+        """The strips' background: the theme's card colour, solid and a shade darker."""
         bg = self.C["bg"]
         if bg[3] == 0:                                 # card-less themes
             return (14, 16, 20)
@@ -535,6 +558,7 @@ class Hud(StyleMixin):
         # at the top, the standings and ghost down the sides just below them, and
         # speed and lean sit together at the bottom like a dash, a little larger.
         portrait_scale = {"speed": 1.15, "gforce": 1.15} if portrait else {}
+        side_k = self._side_scales(specs)
         sized = []
         for key, name, rw, rh, corner, fn in specs:
             if key in self.hide:
@@ -542,14 +566,13 @@ class Hud(StyleMixin):
             cfg = self.layout.get(key, {})
             k_out = self.base_k * float(cfg.get("scale", 1.0)) * portrait_scale.get(key, 1.0)
             trim = self._trim(name)
-            if self.sidebar and key == "race":
-                m_ = 36 * self.base_k
-                L_, T_, R_, B_ = trim
-                k_out = min((self.side_w - 2 * m_) / max(rw - L_ - R_, 1),
-                            (self.H - 2 * m_) / max(rh - T_ - B_, 1))
+            if key in side_k:                    # in the side panel: sized to fill its width
+                k_out = side_k[key]
             # reshaping: these panels can be made wider/narrower and taller/shorter on
             # their own; their contents re-flow (the round gauges only scale evenly)
-            if key in ("map", "race") and name != "racemap":     # (the combined panel did its own)
+            if key in side_k:
+                pass
+            elif key in ("map", "race") and name != "racemap":     # (the combined panel did its own)
                 rw, rh = rw * self._shape_factor(cfg, "w"), rh * self._shape_factor(cfg, "h")
             elif key == "laps":
                 rw = max(rw * self._shape_factor(cfg, "w"), self._lap_geom["min_w"])
@@ -561,11 +584,28 @@ class Hud(StyleMixin):
         gap = int(round(16 * self.base_k))
         size = {key: (vis[2], vis[3]) for key, _, _w, _h, _c, _f, _cfg, _k, vis in sized}
         panels = []
+        # the side panel: its panels stacked top to bottom, centred in the strip
+        side_pos = {}
+        for st in self.strips:
+            sx0, sy0, sw, sh = self.strip_rect(st)
+            items = sorted([it for it in sized if it[0] in side_k and self.in_side(it[0]) == st],
+                           key=lambda it: self._side_order(it[0]))
+            if st == "bottom":                  # a row, centred across the bottom strip
+                row = sum(it[8][2] for it in items) + gap * max(len(items) - 1, 0)
+                x = sx0 + (sw - row) / 2
+                for it in items:
+                    side_pos[it[0]] = (x, sy0 + (sh - it[8][3]) / 2)
+                    x += it[8][2] + gap
+            else:                               # a column, centred in the side strip
+                col = sum(it[8][3] for it in items) + gap * max(len(items) - 1, 0)
+                y = sy0 + (sh - col) / 2
+                for it in items:
+                    side_pos[it[0]] = (sx0 + (sw - it[8][2]) / 2, y)
+                    y += it[8][3] + gap
         for key, name, dw, dh, corner, fn, cfg, k_out, vis in sized:
             L, T, w, h = vis
-            if self.sidebar and key == "race":       # beside the video, filling the side panel
-                px = self.side_x0 + (self.side_w - w) / 2
-                py = (H - h) / 2
+            if key in side_pos:
+                px, py = side_pos[key]
                 panels.append(Panel(name, key, int(round(px)), int(round(py)), dw, dh, k=k_out * self.ss,
                                     ss=self.ss, draw=fn, vx=L, vy=T, vw=w, vh=h))
                 continue
@@ -582,6 +622,56 @@ class Hud(StyleMixin):
             panels.append(Panel(name, key, px, py, dw, dh, k=k_out * self.ss, ss=self.ss, draw=fn,
                                 vx=L, vy=T, vw=w, vh=h))
         return panels
+
+    SIDE_ORDER = ("laps", "race", "map", "ghost", "speed", "gforce")
+
+    def strip_rect(self, st: str) -> tuple:
+        """(x, y, w, h) of a strip in the output frame."""
+        if st == "left":
+            return 0, 0, self.left_w, self.H
+        if st == "right":
+            return self.left_w + self.W, 0, self.right_w, self.H
+        return 0, self.H, self.canvas_w, self.bottom_h
+
+    def in_side(self, key: str) -> str:
+        """The strip a panel sits in, or "" if it's on the video."""
+        w = (self.layout.get(key, {}) or {}).get("where")
+        if w == "side":                          # older setting: the first side strip
+            w = next((st for st in self.strips if st != "bottom"), "bottom")
+        return w if w in self.strips else ""
+
+    def _side_order(self, key: str) -> float:
+        cfg = self.layout.get(key, {}) or {}
+        if cfg.get("side_order") is not None:
+            return float(cfg["side_order"])
+        return self.SIDE_ORDER.index(key) / 10 if key in self.SIDE_ORDER else 0.99
+
+    def _side_scales(self, specs) -> dict:
+        """Drawing scale for each panel in a strip. In a side strip each panel fills
+        its width (a column); in the bottom strip each fills its height (a row);
+        all of a strip's panels shrink together if they don't fit."""
+        out = {}
+        m, gap = 36 * self.base_k, 16 * self.base_k
+        for st in self.strips:
+            _, _, sw, sh = self.strip_rect(st)
+            items = []
+            for key, name, rw, rh, corner, fn in specs:
+                if key in self.hide or self.in_side(key) != st:
+                    continue
+                L, T, R, B = self._trim(name)
+                if st == "bottom":
+                    k = (sh - 2 * m) / max(rh - T - B, 1)
+                    items.append((key, k, (rw - L - R) * k))
+                else:
+                    k = (sw - 2 * m) / max(rw - L - R, 1)
+                    items.append((key, k, (rh - T - B) * k))
+            if not items:
+                continue
+            total = sum(h for *_, h in items) + gap * (len(items) - 1)
+            room = (sw if st == "bottom" else sh) - 2 * m
+            f = min(1.0, room / max(total, 1))
+            out.update({key: k * f for key, k, _ in items})
+        return out
 
     def _portrait_pos(self, key, w, h, size, m, gap):
         W, H = self.W, self.H
@@ -605,8 +695,13 @@ class Hud(StyleMixin):
         """Panel rectangles in output pixels, for the GUI."""
         return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.vw, "h": p.vh,
                  "ay": p.ay + p.vy, "ax": p.vx,
-                 "reshape": "" if (self.sidebar and p.key == "race") else self.RESHAPE.get(p.key, ""),
-                 "fixed": bool(self.sidebar and p.key == "race")} for p in self.panels]
+                 "reshape": "none" if self.in_side(p.key) else self.RESHAPE.get(p.key, ""),
+                 "side": self.in_side(p.key)} for p in self.panels]
+
+    def frame_info(self) -> dict:
+        """The output frame and its strips, for the editor."""
+        return {"w": self.canvas_w, "h": self.canvas_h, "vx": self.vid_x0, "vw": self.W, "vh": self.H,
+                "strips": {st: list(self.strip_rect(st)) for st in self.strips}}
 
     # ------------------------------------------------------------ static layer
 
@@ -828,8 +923,8 @@ class Hud(StyleMixin):
             arr = np.array(atlas)
             self.paste_ghost(arr, ghost_frame(g.ref_vt, w, h))
             atlas = Image.fromarray(arr, "RGBA")
-        if self.sidebar:
-            canvas = Image.new("RGBA", (self.canvas_w, self.H), self.side_colour() + (255,))
+        if self.strips:
+            canvas = Image.new("RGBA", (self.canvas_w, self.canvas_h), self.side_colour() + (255,))
             canvas.paste(frame.convert("RGB"), (self.vid_x0, 0))
             out = canvas
         else:

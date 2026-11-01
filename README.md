@@ -316,14 +316,8 @@ pick your number. Settings save with the video, so after that `--race` or
   under it, then the standings. Move, resize and reshape it as one ("Track
   map & standings" in the panel list); the map's turn setting still applies.
   Hide either part to get the other on its own.
-- **Beside the video:** in the Race tab, put the map & standings panel
-  **Left of video** or **Right of video** (`--race-side left|right`) and it
-  moves off the picture into its own strip. The output gets wider to make
-  room: an upright video becomes 4:5 (a 1530x2752 GO 3S clip renders at
-  2202x2752), a wide one 21:9 (1920x1080 becomes 2520x1080). The strip is a
-  solid, slightly darker shade of the theme's card colour, and the panel is
-  sized to fill it. The editor preview shows the wider frame, and the other
-  panels are still placed on the video as before.
+- **Off the picture:** the race panel can go in a strip beside or under the
+  video (Race tab, or see "Strips" below), so it doesn't cover the picture.
 - **The field on the map:** every other rider still racing is shown on the
   track map as a tag with their race number, and your own marker gets a
   highlight ring so you stand out. When several classes race together, each
@@ -372,6 +366,29 @@ saved next to the video as `VIDEO.race.json`.
 To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
+
+## Strips beside and under the video
+
+To keep the picture clear, turn on strips around it in **Look & layout**:
+**Left**, **Right** and **Bottom**, any combination. The output frame grows
+to make room (the video itself isn't stretched or cropped):
+
+- a side strip makes an upright video 4:5 (a 1530x2752 GO 3S clip gets a
+  672-pixel strip) or a wide one 21:9 (1080p gets 600 pixels); with both
+  sides on, each gets that width;
+- the bottom strip runs under everything and makes a wide video 4:3 (360
+  pixels under 1080p), or adds a band a third of the width under an upright one.
+
+Then put any panel in a strip: choose it under the panel in the Panels list
+("On the video", "Left strip", ...), or drag the panel into the strip on the
+preview. Drag along a strip to change the order, or back onto the video to
+take it out. Panels in a side strip stack top to bottom, each as wide as the
+strip; panels in the bottom strip sit side by side, each as tall as it; all
+of a strip's panels shrink together if they don't fit. The strips are a
+solid, slightly darker shade of the theme's card colour.
+
+From the command line: `--place race=right,speed=bottom,gforce=bottom` (the
+strips used are turned on automatically; `video` puts a panel back).
 
 ## Portrait (upright) video
 

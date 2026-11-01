@@ -147,11 +147,11 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     # one rawvideo stream carries all panels stacked; crop each back out
     parts = [f"[1:v]split={len(hud.panels)}" + "".join(f"[a{i}]" for i in range(len(hud.panels)))]
     prev = "0:v"
-    out_w = info["width"]
-    if getattr(hud, "sidebar", None):          # race side panel: widen the frame beside the video
+    out_w, out_h = info["width"], info["height"]
+    if getattr(hud, "strips", None):           # strips beside/under the video: a bigger frame
         c = "".join(f"{v:02x}" for v in hud.side_colour())
-        out_w = hud.canvas_w
-        parts.append(f"[0:v]pad={hud.canvas_w}:{info['height']}:{hud.vid_x0}:0:color=0x{c}[base]")
+        out_w, out_h = hud.canvas_w, hud.canvas_h
+        parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:0:color=0x{c}[base]")
         prev = "base"
     for i, p in enumerate(hud.panels):
         parts.append(f"[a{i}]crop={p.vw}:{p.vh}:{p.vx}:{p.ay + p.vy}[p{i}]")
@@ -171,7 +171,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
     elif info["has_audio"]:
         cmd += ["-map", "0:a:0", "-c:a", "copy"]
-    cmd += encoder_args(codec, out_w, info["height"], float(fps), bitrate, quality)
+    cmd += encoder_args(codec, out_w, out_h, float(fps), bitrate, quality)
     cmd += ["-movflags", "+faststart", "-shortest", out]
 
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)

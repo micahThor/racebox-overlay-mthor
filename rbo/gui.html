@@ -189,6 +189,7 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; min-width: 0; }
 .mapturn { grid-column: 1 / -1; margin: 4px 0 6px; }
 .mapturn .seg button { font-size: 13px; }
+.prow select.where { grid-column: 1 / -1; font-size: 13px; padding: 4px 6px; }
 .lapitems { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
 .lapitems label { display: flex; gap: 6px; align-items: center; }
 .mapturn .flip { font-size: 13px; padding: 4px 8px; }
@@ -348,6 +349,13 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
       <div class="row"><input type="range" id="scale" min="0.6" max="1.6" step="0.05" style="flex:1">
         <span class="pct" id="scaleV"></span></div>
 
+      <h2>Strips beside the video</h2>
+      <p class="hint">Extra space around the picture for panels, so they don't cover it. The output gets
+        bigger to fit: a side strip makes an upright video 4:5 or a wide one 21:9; the bottom strip makes a
+        wide video 4:3. Put a panel in a strip below, or drag it there on the video.</p>
+      <div class="seg" id="stripBtns" role="group" aria-label="Strips">
+        <button data-strip="left">Left</button><button data-strip="right">Right</button><button data-strip="bottom">Bottom</button></div>
+
       <h2>Panels</h2>
       <p>Drag panels on the video to move them. Hover a panel for its handles: the corner resizes it; the side and bottom handles make the map, standings, lap timer and ghost wider or taller on their own.</p>
       <div id="panelList"></div>
@@ -397,9 +405,9 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <div class="row"><select id="rcRider" aria-label="Your rider" style="flex:1"></select></div>
         <h2>Map &amp; standings panel</h2>
         <div class="seg" id="rcSide" role="group" aria-label="Where the race panel goes">
-          <button data-side="">On the video</button><button data-side="left">Left of video</button><button data-side="right">Right of video</button></div>
-        <p class="hint" style="margin-top:6px">Beside the video, the output gets wider so nothing covers the picture:
-          an upright video becomes 4:5, a wide one 21:9.</p>
+          <button data-side="">On the video</button><button data-side="left">Left</button><button data-side="right">Right</button><button data-side="bottom">Bottom</button></div>
+        <p class="hint" style="margin-top:6px">Left, right or bottom puts it in a strip off the picture (the output gets
+          bigger to fit). Other panels can go in strips too, in Look &amp; layout.</p>
         <label class="row" style="margin-top:10px;gap:8px"><input type="checkbox" id="rcClass">
           Standings show only my class</label>
         <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="rcField">
@@ -479,9 +487,10 @@ function drawPanels(h) {
         let el = overlay.querySelector(`[data-key="${p.key}"]`);
         if (!el) { el = document.createElement("div"); el.className = "panel"; el.dataset.key = p.key;
                    el.title = "Drag to move"; overlay.appendChild(el); attachDrag(el); }
-        el.classList.toggle("fixed", !!p.fixed);
-        if (p.fixed) el.title = "Beside the video (Race tab)";
-        addHandles(el, p.fixed ? "none" : (p.reshape || ""));
+        el.dataset.strip = p.side || "";
+        el.title = p.side ? "In the " + p.side + " strip: drag along it to reorder, or onto the video to take it out"
+                          : "Drag to move" + (hasStrips() ? " (or into a strip)" : "");
+        addHandles(el, p.reshape || "");
         if (p.key === "ghost") placeGhost(el, p, h.ghost);
         if (el.classList.contains("drag")) continue;
         el.style.left = (p.x / h.pw * 100) + "%";
@@ -543,7 +552,7 @@ function attachResize(el, h) {
     else cfg.h = r3(Math.min(Math.max((cfg.h ?? 1) * fh, 0.4), 3));
     const vr = vidRect();                                       // keep the top-left corner where it is
     cfg.x = +((el.offsetLeft - vr.x) / vr.w).toFixed(4);
-    cfg.y = +(el.offsetTop / stage.clientHeight).toFixed(4);
+    cfg.y = +(el.offsetTop / vr.h).toFixed(4);
     P.layout[k] = cfg;
     save({ layout: P.layout }); renderLook();
   });
@@ -551,14 +560,13 @@ function attachResize(el, h) {
 function attachDrag(el) {
   let sx, sy, ox, oy;
   el.addEventListener("pointerdown", e => {
-    if (el.classList.contains("fixed")) return;
     e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag");
     sx = e.clientX; sy = e.clientY; ox = el.offsetLeft; oy = el.offsetTop;
   });
   el.addEventListener("pointermove", e => {
     if (!el.classList.contains("drag")) return;
-    const W = stage.clientWidth, H = stage.clientHeight, vr = vidRect();
-    const x = Math.min(Math.max(ox + e.clientX - sx, vr.x), vr.x + vr.w - el.offsetWidth);
+    const W = stage.clientWidth, H = stage.clientHeight;
+    const x = Math.min(Math.max(ox + e.clientX - sx, 0), W - el.offsetWidth);
     const y = Math.min(Math.max(oy + e.clientY - sy, 0), H - el.offsetHeight);
     el.style.left = (x / W * 100) + "%"; el.style.top = (y / H * 100) + "%";
   });
@@ -567,10 +575,20 @@ function attachDrag(el) {
     el.classList.remove("drag");
     const k = el.dataset.key;
     const cfg = Object.assign({}, P.layout[k] || {}), vr = vidRect();
-    cfg.x = +((el.offsetLeft - vr.x) / vr.w).toFixed(4);          // a fraction of the video
-    cfg.y = +(el.offsetTop / stage.clientHeight).toFixed(4);
+    const cx = el.offsetLeft + el.offsetWidth / 2, cy = el.offsetTop + el.offsetHeight / 2;
+    const strip = stripAt(cx, cy);
+    if (strip) {                            // dropped in a strip: it goes there, in this order
+      cfg.where = strip;
+      cfg.side_order = +((strip === "bottom" ? cx / stage.clientWidth : cy / stage.clientHeight)).toFixed(3);
+    } else {                                // on the video: where it was dropped
+      delete cfg.where; delete cfg.side_order;
+      const x = Math.min(Math.max(el.offsetLeft, vr.x), vr.x + vr.w - el.offsetWidth);
+      const y = Math.min(Math.max(el.offsetTop, 0), vr.h - el.offsetHeight);
+      cfg.x = +((x - vr.x) / vr.w).toFixed(4);                    // a fraction of the video
+      cfg.y = +(y / vr.h).toFixed(4);
+    }
     P.layout[k] = cfg;
-    save({ layout: P.layout });
+    save({ layout: P.layout }); renderLook();
   });
 }
 
@@ -610,8 +628,8 @@ async function save(changes) {
     if (r.project && r.project.ghost_source !== undefined) P.ghost_source = r.project.ghost_source;
     if (r.race) S.race = r.race;
     if (r.canvas) { const old = JSON.stringify(S.video.canvas); S.video.canvas = r.canvas;
-                    if (JSON.stringify(r.canvas) !== old) fitStage(); }
-    const raceCh = ["race", "race_source", "race_number", "race_class", "race_field", "race_side"].some(k => k in changes);
+                    if (JSON.stringify(r.canvas) !== old) { fitStage(); renderLook(); } }
+    const raceCh = ["race", "race_source", "race_number", "race_class", "race_field", "strips"].some(k => k in changes);
     if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || "ghost_source" in changes || raceCh) renderLook(); }
     if (raceCh || "call_settings" in changes) { renderRace(); renderLapTable(); }
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
@@ -677,17 +695,28 @@ vid.addEventListener("seeked", () => { updatePlayhead(); refreshHud(); });
 vid.addEventListener("timeupdate", updatePlayhead);
 /* the whole video always fits on screen: an upright (portrait) video is sized by
    the window's height instead of being drawn full width and cut off */
-/* the output frame: the video, plus the race side panel when it's beside the video */
-function canvas() { return (S && S.video && S.video.canvas) || { w: S.video.width, h: S.video.height, vx: 0, vw: S.video.width }; }
+/* the output frame: the video plus any strips beside/under it */
+function canvas() {
+  const c = S && S.video && S.video.canvas;
+  return c || { w: S.video.width, h: S.video.height, vx: 0, vw: S.video.width, vh: S.video.height, strips: {} };
+}
+function hasStrips() { return Object.keys(canvas().strips || {}).length > 0; }
 function vidRect() {                        // the video's part of the stage, in stage pixels
   const c = canvas(), k = stage.clientWidth / c.w;
-  return { x: c.vx * k, w: c.vw * k, h: stage.clientHeight };
+  return { x: c.vx * k, w: c.vw * k, h: c.vh * k };
+}
+function stripAt(cx, cy) {                  // which strip a point (stage px) is in, or ""
+  const c = canvas(), k = stage.clientWidth / c.w;
+  for (const [name, r] of Object.entries(c.strips || {})) {
+    if (cx >= r[0] * k && cx <= (r[0] + r[2]) * k && cy >= r[1] * k && cy <= (r[1] + r[3]) * k) return name;
+  }
+  return "";
 }
 function layoutVideo() {
   const c = canvas();
-  if (c.side) {
-    Object.assign(vid.style, { position: "absolute", top: "0", height: "100%",
-      left: (c.vx / c.w * 100) + "%", width: (c.vw / c.w * 100) + "%" });
+  if (hasStrips()) {
+    Object.assign(vid.style, { position: "absolute", top: "0",
+      left: (c.vx / c.w * 100) + "%", width: (c.vw / c.w * 100) + "%", height: (c.vh / c.h * 100) + "%" });
   } else {
     Object.assign(vid.style, { position: "", top: "", height: "", left: "", width: "" });
     stage.style.height = ""; stage.style.background = "";
@@ -704,7 +733,7 @@ function fitStage() {
   const k = Math.min(aw / W, ah / H);
   stage.style.width = Math.floor(W * k) + "px";
   layoutVideo();
-  if (canvas().side) stage.style.height = Math.floor(H * k) + "px";
+  if (hasStrips()) stage.style.height = Math.floor(H * k) + "px";
 }
 window.addEventListener("resize", fitStage);
 vid.addEventListener("loadedmetadata", () => { fitStage(); renderTimeline(); refreshHud(); });
@@ -833,7 +862,13 @@ document.querySelectorAll("[data-gn]").forEach(b => b.addEventListener("click", 
   save({ ghost_source: src });
 }));
 
+document.querySelectorAll("#stripBtns button").forEach(b => b.addEventListener("click", () => {
+  const on = new Set(P.strips || []);
+  on.has(b.dataset.strip) ? on.delete(b.dataset.strip) : on.add(b.dataset.strip);
+  save({ strips: ["left", "right", "bottom"].filter(x => on.has(x)) });
+}));
 function renderLook() {
+  document.querySelectorAll("#stripBtns button").forEach(b => b.setAttribute("aria-pressed", (P.strips || []).includes(b.dataset.strip)));
   renderGhost();
   const th = $("#themes"); th.innerHTML = "";
   for (const t of S.themes) {
@@ -857,6 +892,19 @@ function renderLook() {
       <span>${cfg.w != null || cfg.h != null ? '<button class="link resetshape" title="Back to its normal width and height">Reset shape</button>' : ""}</span><button>Reset position</button>
       <input type="range" min="0.5" max="2" step="0.05" value="${sc}" aria-label="${p.label} size">
       <span class="pct">${Math.round(sc * 100)}%</span>`;
+    const strips = Object.keys(canvas().strips || {});
+    if (strips.length && !p.inside) {     // where this panel goes: the video or one of the strips
+      const sel = document.createElement("select"); sel.className = "where"; sel.setAttribute("aria-label", p.label + " goes");
+      sel.innerHTML = `<option value="">On the video</option>` + strips.map(st =>
+        `<option value="${st}">${st[0].toUpperCase() + st.slice(1)} strip</option>`).join("");
+      sel.value = strips.includes(cfg.where) ? cfg.where : "";
+      sel.addEventListener("change", () => {
+        const c = Object.assign({}, P.layout[p.key] || {});
+        if (sel.value) c.where = sel.value; else { delete c.where; delete c.side_order; }
+        P.layout[p.key] = c; save({ layout: P.layout });
+      });
+      row.appendChild(sel);
+    }
     const [chk, rng] = row.querySelectorAll("input");
     if (p.inside) {                       // the map is drawn inside the race panel: size and place that one
       row.querySelectorAll("input[type=range], .pct").forEach(e => e.style.display = "none");
@@ -1075,7 +1123,8 @@ function renderRace() {
   sel.disabled = !R.riders.length;
   sel.value = P.race_number || "";
   $("#rcClass").checked = !!P.race_class;
-  document.querySelectorAll("#rcSide button").forEach(b => b.setAttribute("aria-pressed", (P.race_side || "") === b.dataset.side));
+  const rw = ((P.layout || {}).race || {}).where || "";
+  document.querySelectorAll("#rcSide button").forEach(b => b.setAttribute("aria-pressed", ((P.strips || []).includes(rw) ? rw : "") === b.dataset.side));
   $("#rcField").checked = P.race_field !== false;
   const info = $("#rcInfo");
   if (R.loaded) {
@@ -1108,7 +1157,11 @@ $("#rcSrc").addEventListener("keydown", e => { if (e.key === "Enter") $("#rcLoad
 $("#rcRider").addEventListener("change", e => saveRace({ race_number: e.target.value || null }));
 $("#rcClass").addEventListener("change", e => save({ race_class: e.target.checked }));
 document.querySelectorAll("#rcSide button").forEach(b => b.addEventListener("click", () => {
-  save({ race_side: b.dataset.side || null }); renderRace();
+  const st = b.dataset.side, c = Object.assign({}, P.layout.race || {});
+  const strips = new Set(P.strips || []);
+  if (st) { c.where = st; strips.add(st); } else { delete c.where; delete c.side_order; }
+  P.layout.race = c;
+  save({ layout: P.layout, strips: ["left", "right", "bottom"].filter(x => strips.has(x)) }); renderRace();
 }));
 $("#rcField").addEventListener("change", e => save({ race_field: e.target.checked }));
 

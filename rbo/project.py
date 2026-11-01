@@ -33,7 +33,8 @@ still win over anything in the file.
       "race_number": "96",          your start number in that race
       "race_class": false,          tower shows only your class
       "race_field": true,           the other riders as dots on the map
-      "race_side": "right"          race panel beside the video (left/right) instead of on it
+      "strips": ["right", "bottom"], extra space beside/under the video; a panel goes in one
+                                    with "where": "left"/"right"/"bottom" in its layout
     }
 """
 from __future__ import annotations
@@ -46,7 +47,7 @@ DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {},
             "ghost": False, "race": False, "race_source": None, "race_number": None,
             "race_class": False, "race_field": True, "ghost_source": None,
-            "trim": None, "race_side": None}
+            "trim": None, "race_side": None, "side": None, "strips": []}
 
 
 def path_for(video: str | Path) -> Path:
@@ -63,6 +64,17 @@ def load(video: str | Path) -> dict:
             data.update(json.loads(p.read_text()))
         except (OSError, json.JSONDecodeError):
             pass
+    # older settings: one race-only side panel, or a single "side"
+    old = data.get("race_side") if data.get("race_side") in ("left", "right") else None
+    if old and not data.get("strips"):
+        layout = dict(data.get("layout") or {})
+        layout["race"] = dict(layout.get("race", {}), where=old)
+        data["layout"] = layout
+        data["strips"] = [old]
+    if data.get("side") in ("left", "right", "bottom") and not data.get("strips"):
+        data["strips"] = [data["side"]]
+    data["race_side"] = data["side"] = None
+    data["strips"] = [st for st in ("left", "right", "bottom") if st in (data.get("strips") or [])]
     return data
 
 
