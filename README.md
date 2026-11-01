@@ -145,6 +145,13 @@ showing where each lap falls.
   straight away whether laps start where the video says they do.
 - **Look & layout tab:** pick a theme, mph or km/h, and overall size; show
   or hide panels and resize them; drag panels on the video to move them.
+  Hover a panel on the video for its handles: the corner resizes it evenly;
+  the side and bottom handles change only its width or height. Those work on
+  the panels whose contents re-flow: the track map (the track fits the new
+  shape), the standings (narrower cuts long names, taller spreads the rows),
+  the lap timer (width) and the ghost (its video stays in proportion inside).
+  The round gauges only resize evenly so they don't distort. **Reset shape**
+  in the panel list undoes it.
   Under **Lap timer & sectors**, choose what it shows: **Lap time**,
   **Sectors**, **Last lap**, **Best lap**. The card resizes to fit: just the
   lap time is a small card, all four is the full-size one (command line:

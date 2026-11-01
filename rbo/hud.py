@@ -338,6 +338,15 @@ class Hud(StyleMixin):
         dx, dy = np.asarray(xx) - cx, np.asarray(yy) - cy
         return cx + dx * c - dy * s_, cy + dx * s_ + dy * c
 
+    RESHAPE = {"map": "wh", "race": "wh", "ghost": "wh", "laps": "w"}
+
+    @staticmethod
+    def _shape_factor(cfg: dict, k: str) -> float:
+        try:
+            return min(max(float(cfg.get(k, 1.0) or 1.0), 0.4), 3.0)
+        except (TypeError, ValueError):
+            return 1.0
+
     LAP_ITEMS = ("time", "sectors", "last", "best")
 
     def _laps_geometry(self) -> tuple[int, int]:
@@ -371,6 +380,7 @@ class Hud(StyleMixin):
         wide = "sectors" in items or ("last" in items and "best" in items)
         need = self.measure("8:88.88", 92) / self.k + 56 if "time" in items else 0   # a held lap time
         g["w"] = int(max(520 if wide else 360, need))
+        g["min_w"] = max(need, 430 if wide else 0)      # narrowest it can be made
         self._lap_geom = g
         return g["w"], g["h"]
 
@@ -402,10 +412,15 @@ class Hud(StyleMixin):
             else:
                 sw = 464 if a <= 1 else 340 / a
             sh = sw * a
-            self.ghost_slot_ref = (8, 8, sw, sh)
             label_h = 33 if sw + 16 >= 420 else 56          # narrow window: label on two lines
-            specs.append(("ghost", "ghost", sw + 16, sh + 8 + label_h, "tc" if not portrait else "tr",
-                          self._draw_ghost))
+            gw, gh = sw + 16, sh + 8 + label_h
+            cfg = self.layout.get("ghost", {}) or {}
+            gw, gh = gw * self._shape_factor(cfg, "w"), gh * self._shape_factor(cfg, "h")
+            label_h = 33 if gw >= 420 else 56
+            avail_h = gh - 8 - label_h
+            fit = min(gw - 16, avail_h / a)                  # video fitted inside, centred
+            self.ghost_slot_ref = ((gw - fit) / 2, 8 + (avail_h - fit * a) / 2, fit, fit * a)
+            specs.append(("ghost", "ghost", gw, gh, "tc" if not portrait else "tr", self._draw_ghost))
         if self.race is not None:
             n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
             self.race_rows = min(n, RACE_ROWS)
@@ -422,6 +437,12 @@ class Hud(StyleMixin):
                 continue
             cfg = self.layout.get(key, {})
             k_out = self.base_k * float(cfg.get("scale", 1.0)) * portrait_scale.get(key, 1.0)
+            # reshaping: these panels can be made wider/narrower and taller/shorter on
+            # their own; their contents re-flow (the round gauges only scale evenly)
+            if key in ("map", "race"):
+                rw, rh = rw * self._shape_factor(cfg, "w"), rh * self._shape_factor(cfg, "h")
+            elif key == "laps":
+                rw = max(rw * self._shape_factor(cfg, "w"), self._lap_geom["min_w"])
             w, h = max(2, int(round(rw * k_out))), max(2, int(round(rh * k_out)))
             sized.append((key, name, w, h, corner, fn, cfg, k_out))
         m = int(round(36 * self.base_k))
@@ -462,8 +483,8 @@ class Hud(StyleMixin):
 
     def describe(self) -> list[dict]:
         """Panel rectangles in output pixels, for the GUI."""
-        return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "ay": p.ay}
-                for p in self.panels]
+        return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "ay": p.ay,
+                 "reshape": self.RESHAPE.get(p.key, "")} for p in self.panels]
 
     # ------------------------------------------------------------ static layer
 
@@ -879,7 +900,9 @@ class Hud(StyleMixin):
         style = self.theme.get("tower", "default")
         style = style if style in ("broadcast", "hud", "arcade", "pitboard") else "default"
         self.tower_header(d, p, b, style)
-        rows, rh, top = b["rows"], S(RACE_RH), oy + S(62)
+        top = oy + S(62)
+        rh = max(S(RACE_RH) * 0.6, (p.ih - S(70)) / max(self.race_rows, 1))   # taller panel: rows spread out
+        rows = b["rows"]
         n = len(rows)
         me = next((i for i, r in enumerate(rows) if r["me"]), 0)
         if n > self.race_rows:                      # top three plus the riders around you
