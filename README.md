@@ -384,7 +384,8 @@ Then put any panel in a strip: choose it under the panel in the Panels list
 ("On the video", "Left strip", ...), or drag the panel into the strip on the
 preview. Drag along a strip to change the order, or back onto the video to
 take it out. Panels in a side strip stack top to bottom, each as wide as the
-strip; panels in the bottom strip sit side by side, each as tall as it; all
+strip; panels in the bottom strip sit side by side, each as tall as it, as a
+row centred under the video (not the whole frame); all
 of a strip's panels shrink together if they don't fit. The strips are a
 solid, slightly darker shade of the theme's card colour.
 

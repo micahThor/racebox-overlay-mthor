@@ -592,9 +592,10 @@ class Hud(StyleMixin):
             sx0, sy0, sw, sh = self.strip_rect(st)
             items = sorted([it for it in sized if it[0] in side_k and self.in_side(it[0]) == st],
                            key=lambda it: self._side_order(it[0]))
-            if st == "bottom":                  # a row, centred across the bottom strip
+            if st == "bottom":                  # a row, centred under the video
                 row = sum(it[8][2] for it in items) + gap * max(len(items) - 1, 0)
-                x = sx0 + (sw - row) / 2
+                x = self.vid_x0 + (self.W - row) / 2
+                x = min(max(x, sx0), sx0 + max(sw - row, 0))   # too wide: slide along, stay in frame
                 for it in items:
                     side_pos[it[0]] = (x, sy0 + (sh - it[8][3]) / 2)
                     x += it[8][2] + gap
