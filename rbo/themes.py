@@ -38,7 +38,7 @@ from pathlib import Path
 THEMES: dict[str, dict] = {
     "carbon": {
         "label": "Carbon",
-        "bg": (10, 12, 16, 200), "edge": (255, 255, 255, 40),
+        "bg": (10, 12, 16, 168), "edge": (255, 255, 255, 40),
         "text": (245, 247, 250, 255), "dim": (150, 156, 168, 255),
         "accent": (255, 92, 40, 255),
         "purple": (178, 92, 255, 255), "green": (40, 205, 110, 255),
