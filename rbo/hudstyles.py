@@ -172,6 +172,9 @@ class StyleMixin:
         """You on the map. heading: radians on screen (0 = right, y down);
         facing: whether side-on icons face right."""
         kind = self.theme.get("marker", "bike")
+        if getattr(self, "race", None) is not None:     # race mode: your race number, a size up
+            self.number_badge(img, d, p, px, py, self.race.me.number, kind)
+            return
         if kind == "badge":
             self.stamp(img, self.glow(self.C["accent"], 15), px, py, p)
             num = self.race.me.number if getattr(self, "race", None) is not None else None
@@ -262,6 +265,29 @@ class StyleMixin:
         """Dark or white text, whichever reads on colour c."""
         lum = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
         return (16, 16, 20, 255) if lum > 150 else (255, 255, 255, 255)
+
+    def number_badge(self, img, d, p, x, y, num: str, kind: str):
+        """You on the race map: a large circle with your race number in it,
+        styled for the theme (an outlined circle on the HUD, a square on arcade)."""
+        S = self.S
+        R, ring = S(19), max(2, S(3.5))
+        size = 19 if len(num) < 3 else 15
+        f = self.font(size)
+        acc, white = self.C["accent"], (255, 255, 255, 255)
+        if kind == "target":                     # HUD: outlined, text in the HUD colour
+            sc = self.C["stroke_color"]
+            d.ellipse([x - R - S(2), y - R - S(2), x + R + S(2), y + R + S(2)], outline=sc, width=ring + S(3))
+            d.ellipse([x - R, y - R, x + R, y + R], fill=(0, 22, 8, 200), outline=acc, width=ring)
+            self.text(d, x, y + f.size * 0.36, num, size, acc, "m")
+            return
+        self.stamp(img, self.glow(acc, 18), x, y, p)
+        if kind == "sprite":                     # arcade: a square pixel badge
+            d.rectangle([x - R - ring, y - R - ring, x + R + ring, y + R + ring], fill=(10, 0, 24, 255))
+            d.rectangle([x - R, y - R, x + R, y + R], fill=acc)
+        else:                                    # round, with the theme's ring (brass on vintage)
+            d.ellipse([x - R - ring, y - R - ring, x + R + ring, y + R + ring], fill=self.C["ring"])
+            d.ellipse([x - R, y - R, x + R, y + R], fill=acc)
+        self.text(d, x, y + f.size * 0.36, num, size, self._ink_on(acc) if kind != "sprite" else white, "m")
 
     def field_dot(self, d, x, y, num: str = "", cls: str | None = None):
         """Another rider on the map (race mode): their number on a tag in their

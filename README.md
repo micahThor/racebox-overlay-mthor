@@ -319,8 +319,8 @@ pick your number. Settings save with the video, so after that `--race` or
 - **Off the picture:** the race panel can go in a strip beside or under the
   video (Race tab, or see "Strips" below), so it doesn't cover the picture.
 - **The field on the map:** every other rider still racing is shown on the
-  track map as a tag with their race number, and your own marker gets a
-  highlight ring so you stand out. When several classes race together, each
+  track map as a tag with their race number, and you are a bigger circle
+  (a square in Retro Arcade) with your own race number in it, so you stand out. When several classes race together, each
   class has its own colour: the tags are coloured by class, a key along the
   bottom of the race panel says which colour is which, and the standings mark each row with the
   same colour. Positions between timing-line
