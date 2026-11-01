@@ -825,6 +825,10 @@ function renderLook() {
       <input type="range" min="0.5" max="2" step="0.05" value="${sc}" aria-label="${p.label} size">
       <span class="pct">${Math.round(sc * 100)}%</span>`;
     const [chk, rng] = row.querySelectorAll("input");
+    if (p.inside) {                       // the map is drawn inside the race panel: size and place that one
+      row.querySelectorAll("input[type=range], .pct").forEach(e => e.style.display = "none");
+      row.querySelectorAll("button").forEach(e => e.style.display = "none");
+    }
     chk.addEventListener("change", () => { setPanel(p.key, { visible: chk.checked }); });
     rng.addEventListener("input", () => { row.querySelector(".pct").textContent = Math.round(rng.value * 100) + "%"; });
     rng.addEventListener("change", () => setPanel(p.key, { scale: +rng.value }));

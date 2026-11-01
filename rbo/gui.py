@@ -297,17 +297,20 @@ class Studio:
         names = []
         if self.tm.laps:
             names.append(("laps", "Lap timer & sectors"))
-        names.append(("map", "Track map"))
+        racing = self.race() is not None
+        names.append(("map", "Track map (in the race panel)" if racing else "Track map"))
         names.append(("speed", "Speed"))
         if self.proj.get("ghost"):
             names.append(("ghost", "Ghost lap"))
-        if self.race() is not None:
-            names.append(("race", "Race standings"))
+        if racing:
+            names.append(("race", "Track map & standings"))
         if self.tel.is_bike:
             names.append(("gforce", "Lean angle"))
         elif self.tel.g_lat is not None:
             names.append(("gforce", "G-force"))
-        return [{"key": k, "label": lbl} for k, lbl in names]
+        inside = {"map"} if racing and (self.proj.get("layout") or {}).get("race", {}).get("visible") is not False \
+            and (self.proj.get("layout") or {}).get("map", {}).get("visible") is not False else set()
+        return [{"key": k, "label": lbl, "inside": k in inside} for k, lbl in names]
 
     def hud_frame(self, vt: float, pw: int) -> dict:
         W, H = self.vinfo["width"], self.vinfo["height"]

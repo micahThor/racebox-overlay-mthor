@@ -737,7 +737,7 @@ class StyleMixin:
                                     fill=(20, 20, 20, 255))
         if self.race_cls:
             self.text(d, pad, p.iay + S(57), self.race_cls.upper(), 10, "dim", track=1.5)
-        elif self.multi_class():                 # which colour is which class
+        elif self.multi_class() and not getattr(self, "combined", False):   # which colour is which class
             self.class_legend(d, p, S(14) if style != "broadcast" else S(18), p.iay + S(69))
 
     def class_legend(self, d, p, x0, y):

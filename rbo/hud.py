@@ -485,8 +485,25 @@ class Hud(StyleMixin):
             n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
             self.race_rows = min(n, RACE_ROWS)
             self.race_key_h = 14 if self.multi_class() else 0       # the class colour key under the header
-            specs.append(("race", "race", RACE_W, 70 + self.race_key_h + self.race_rows * RACE_RH, "ml",
-                          self._draw_race))
+            self.combined = "map" not in self.hide and "race" not in self.hide
+            if self.combined:
+                # race mode: the track map and the standings are one panel, map on
+                # top, the class key under it, then the standings
+                self.race_key_h = 0
+                cfg = self.layout.get("race", {}) or {}
+                rw_ = RACE_W * self._shape_factor(cfg, "w")
+                x, y = self.map_rot(*self._map_track())
+                aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
+                pad = 2 * MAP_PAD
+                map_h = min(max((rw_ - pad) * aspect + pad, 110), 420)
+                key_h = 24 if self.multi_class() else 0
+                tower_h = (70 + self.race_rows * RACE_RH) * self._shape_factor(cfg, "h")
+                self._racemap = (map_h, key_h)
+                specs = [sp for sp in specs if sp[0] != "map"]
+                specs.append(("race", "racemap", rw_, map_h + key_h + tower_h, "tr", self._draw_racemap))
+            else:
+                specs.append(("race", "race", RACE_W, 70 + self.race_key_h + self.race_rows * RACE_RH, "ml",
+                              self._draw_race))
 
         # Portrait (a helmet camera held upright, or a phone-shaped export): keep the
         # middle of the frame, the track ahead, clear. Timing and map go in the sky
@@ -502,7 +519,7 @@ class Hud(StyleMixin):
             trim = self._trim(name)
             # reshaping: these panels can be made wider/narrower and taller/shorter on
             # their own; their contents re-flow (the round gauges only scale evenly)
-            if key in ("map", "race"):
+            if key in ("map", "race") and name != "racemap":     # (the combined panel did its own)
                 rw, rh = rw * self._shape_factor(cfg, "w"), rh * self._shape_factor(cfg, "h")
             elif key == "laps":
                 rw = max(rw * self._shape_factor(cfg, "w"), self._lap_geom["min_w"])
@@ -959,6 +976,32 @@ class Hud(StyleMixin):
         self.text(d, (S(14) if narrow else p.iw - S(14)), y, label, 16, col, "l" if narrow else "r", track=1)
 
     # ------------------------------------------------------------ race tower
+
+    # ------------------------------------------------------------ map + standings in one
+
+    def _racemap_parts(self, p):
+        """The map and standings areas inside the combined race panel."""
+        kref = p.k / p.ss
+        map_h, key_h = self._racemap
+        mh = int(round(map_h * kref))
+        top = int(round((map_h + key_h) * kref))
+        mp = Panel("map", "map", p.x, p.y, p.w, mh, ay=p.ay, k=p.k, ss=p.ss)
+        tw = Panel("race", "race", p.x, p.y, p.w, p.h - top, ay=p.ay + top, k=p.k, ss=p.ss)
+        return mp, tw, top
+
+    def _static_racemap(self, img, d, p):
+        mp, tw, top = self._racemap_parts(p)
+        self._static_map(img, d, mp)
+        S = self.S
+        if self._racemap[1]:                     # the class key, between the map and the standings
+            self.class_legend(d, p, S(14), p.iay + mp.ih + S(self._racemap[1] - 8))
+        d.line([(S(14), tw.iay), (p.iw - S(14), tw.iay)],
+               fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, S(1)))
+
+    def _draw_racemap(self, img, d, p, t, st):
+        mp, tw, _ = self._racemap_parts(p)
+        self._draw_map(img, d, mp, t, st)
+        self._draw_race(img, d, tw, t, st)
 
     def _draw_race(self, img, d, p, t, st):
         S, oy = self.S, p.iay
