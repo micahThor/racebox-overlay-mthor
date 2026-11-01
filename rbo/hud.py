@@ -63,10 +63,10 @@ def sidebar_width(width: int, height: int) -> int:
 
 
 def bottom_height(width: int, height: int) -> int:
-    """Height of the bottom panel added under a video: a wide video becomes 4:3;
-    an upright one gets a band a third of its width tall (even)."""
-    band = width * 3 / 4 - height if height <= width * 1.15 else width * 0.36
-    return int(round(max(band, 0.25 * min(width, height)) / 2)) * 2
+    """Height of the bottom strip: a slim bar, 12% of the video's longer side
+    (230 px under 1080p, 330 under a 1530x2752 upright clip): room for a row of
+    small gauges and the lap timer (its size slider makes it bigger)."""
+    return int(round(0.12 * max(width, height) / 2)) * 2
 
 
 def strip_size(width: int, height: int, where: str | None) -> tuple[int, int]:

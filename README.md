@@ -376,8 +376,9 @@ to make room (the video itself isn't stretched or cropped):
 - a side strip makes an upright video 4:5 (a 1530x2752 GO 3S clip gets a
   672-pixel strip) or a wide one 21:9 (1080p gets 600 pixels); with both
   sides on, each gets that width;
-- the bottom strip runs under everything and makes a wide video 4:3 (360
-  pixels under 1080p), or adds a band a third of the width under an upright one.
+- the bottom strip is a slim bar under everything, 12% of the video's longer
+  side (230 pixels under 1080p, 330 under a 1530x2752 upright clip), sized
+  for a row of small panels like speed, the lap timer and lean.
 
 Then put any panel in a strip: choose it under the panel in the Panels list
 ("On the video", "Left strip", ...), or drag the panel into the strip on the
