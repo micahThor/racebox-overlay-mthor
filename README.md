@@ -314,8 +314,8 @@ pick your number. Settings save with the video, so after that `--race` or
 - **The field on the map:** every other rider still racing is shown on the
   track map as a tag with their race number, and your own marker gets a
   highlight ring so you stand out. When several classes race together, each
-  class has its own colour: the tags are coloured by class, a key in the
-  corner of the map says which colour is which, and the standings tower
+  class has its own colour: the tags are coloured by class, a key at the
+  top of the standings tower says which colour is which, and the tower
   marks each row with the same colour. Positions between timing-line
   crossings are estimates (see below). Turn the field off with
   `--no-race-field` or the checkbox in the Race tab.

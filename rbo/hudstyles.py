@@ -737,6 +737,23 @@ class StyleMixin:
                                     fill=(20, 20, 20, 255))
         if self.race_cls:
             self.text(d, pad, p.iay + S(57), self.race_cls.upper(), 10, "dim", track=1.5)
+        elif self.multi_class():                 # which colour is which class
+            self.class_legend(d, p, S(14) if style != "broadcast" else S(18), p.iay + S(69))
+
+    def class_legend(self, d, p, x0, y):
+        """One line of class colour dots and names (shrinks to fit the width)."""
+        S = self.S
+        classes = self.shown_classes()
+        for size in (11, 10, 9, 8):
+            w = sum(S(12) + self.measure(c.upper(), size) + len(c) * S(0.8) + S(10) for c in classes)
+            if x0 + w <= p.iw - S(10):
+                break
+        x = x0
+        for c in classes:
+            col = self.class_colour(c)
+            d.ellipse([x, y - S(8.5), x + S(8), y - S(0.5)], fill=col)
+            x += S(12)
+            x += self.text(d, x, y, c.upper(), size, "dim", track=0.8) + S(10)
 
     def tower_row(self, d, p, i, r, ry, rh, t, style):
         S, pad = self.S, self.S(18)

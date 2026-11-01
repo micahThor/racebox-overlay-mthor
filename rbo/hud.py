@@ -484,7 +484,9 @@ class Hud(StyleMixin):
         if self.race is not None:
             n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
             self.race_rows = min(n, RACE_ROWS)
-            specs.append(("race", "race", RACE_W, 70 + self.race_rows * RACE_RH, "ml", self._draw_race))
+            self.race_key_h = 14 if self.multi_class() else 0       # the class colour key under the header
+            specs.append(("race", "race", RACE_W, 70 + self.race_key_h + self.race_rows * RACE_RH, "ml",
+                          self._draw_race))
 
         # Portrait (a helmet camera held upright, or a phone-shaped export): keep the
         # middle of the frame, the track ahead, clear. Timing and map go in the sky
@@ -603,8 +605,6 @@ class Hud(StyleMixin):
             line = list(zip(*self._map_xform(x[m], y[m])))
             dd = self.timing.dist[m] - self.timing.dist[m][0]           # for placing the field
             self._lap_path = (dd / max(dd[-1], 1e-6), x[m], y[m])
-            if self.race is not None and self.race_field:
-                self.class_key(d, p)
             if self.theme.get("map_glow", True):        # soft glow under the racing line
                 layer = Image.new("RGBA", img.size, tuple(self.C["line"][:3]) + (0,))
                 ImageDraw.Draw(layer).line(line, fill=tuple(self.C["line"][:3]) + (110,),
@@ -966,8 +966,8 @@ class Hud(StyleMixin):
         style = self.theme.get("tower", "default")
         style = style if style in ("broadcast", "hud", "arcade", "pitboard") else "default"
         self.tower_header(d, p, b, style)
-        top = oy + S(62)
-        rh = max(S(RACE_RH) * 0.6, (p.ih - S(70)) / max(self.race_rows, 1))   # taller panel: rows spread out
+        top = oy + S(62 + self.race_key_h)
+        rh = max(S(RACE_RH) * 0.6, (p.ih - S(70 + self.race_key_h)) / max(self.race_rows, 1))   # taller: rows spread
         rows = b["rows"]
         n = len(rows)
         me = next((i for i, r in enumerate(rows) if r["me"]), 0)
