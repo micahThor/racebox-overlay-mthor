@@ -177,6 +177,9 @@ input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
 .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 14px; }
 .kinds label { display: flex; gap: 8px; align-items: center; }
 input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; min-width: 0; }
+.mapturn { grid-column: 1 / -1; margin: 4px 0 6px; }
+.mapturn .seg button { font-size: 13px; }
+.mapturn .flip { font-size: 13px; padding: 4px 8px; }
 .tag { font-size: 11px; margin-left: 6px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
 .tag.clean { color: #6fd39a; border-color: #2f6b49; }
 .sens { padding: 8px 0; border-top: 1px solid var(--line); }
@@ -752,6 +755,25 @@ function renderLook() {
     chk.addEventListener("change", () => { setPanel(p.key, { visible: chk.checked }); });
     rng.addEventListener("input", () => { row.querySelector(".pct").textContent = Math.round(rng.value * 100) + "%"; });
     rng.addEventListener("change", () => setPanel(p.key, { scale: +rng.value }));
+    if (p.key === "map") {                 // which way the track map is turned
+      const ex = document.createElement("div"); ex.className = "mapturn";
+      const o = cfg.orient || "north", r = +(cfg.rotate || 0);
+      ex.innerHTML = `<div class="seg" role="group" aria-label="Map orientation">
+          <button data-o="north">North up</button><button data-o="horizontal">Horizontal</button><button data-o="vertical">Vertical</button></div>
+        <div class="row" style="margin-top:6px"><input type="range" min="-180" max="180" step="5" value="${r}" aria-label="Turn the map" style="flex:1">
+          <span class="pct">${r}°</span><button class="flip" title="Turn the map half way round">180°</button></div>`;
+      ex.querySelectorAll("[data-o]").forEach(b => {
+        b.setAttribute("aria-pressed", b.dataset.o === o);
+        b.addEventListener("click", () => { setPanel("map", { orient: b.dataset.o }); renderLook(); });
+      });
+      const rr = ex.querySelector("input[type=range]");
+      rr.addEventListener("input", () => ex.querySelector(".pct").textContent = rr.value + "°");
+      rr.addEventListener("change", () => setPanel("map", { rotate: +rr.value }));
+      ex.querySelector(".flip").addEventListener("click", () => {
+        let v = r + 180; if (v > 180) v -= 360; setPanel("map", { rotate: v }); renderLook();
+      });
+      row.appendChild(ex);
+    }
     row.querySelector("button").addEventListener("click", () => {
       const c = Object.assign({}, P.layout[p.key] || {}); delete c.x; delete c.y; P.layout[p.key] = c;
       save({ layout: P.layout });

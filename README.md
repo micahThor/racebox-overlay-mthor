@@ -145,6 +145,11 @@ showing where each lap falls.
   straight away whether laps start where the video says they do.
 - **Look & layout tab:** pick a theme, mph or km/h, and overall size; show
   or hide panels and resize them; drag panels on the video to move them.
+  Under **Track map**, turn the map: **North up** (as recorded),
+  **Horizontal** (the track's long side across) or **Vertical** (long side up
+  and down, handy for portrait video), plus a slider to fine-tune the angle
+  and a **180°** button if it comes out upside down. From the command line:
+  `--map-orient vertical --map-rotate 180`.
 - **Render video** at the bottom renders the whole clip, or a section, to
   `VID_..._overlay.mp4` next to the original. To trim, scrub to where it
   should begin and press **Set start here** (or the `[` key), then to the end

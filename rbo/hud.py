@@ -176,6 +176,7 @@ class Hud(StyleMixin):
             self.lean_max = (float(np.percentile(tel.lean_deg, 99.7)),
                              float(np.percentile(tel.lean_deg, 0.3)))
 
+        self._setup_map_rotation()
         self.panels = self._layout()
         if not self.panels:   # everything hidden: keep a 2x2 transparent stub
             self.panels = [Panel("none", "none", 0, 0, 2, 2, k=self.k, ss=self.ss,
@@ -314,13 +315,45 @@ class Hud(StyleMixin):
 
     # ------------------------------------------------------------ layout
 
+    # ------------------------------------------------------------ map rotation
+
+    def _setup_map_rotation(self) -> None:
+        """How the track map is turned. layout["map"]: "orient" is "north" (as
+        recorded, north up), "horizontal" (the track's long side across) or
+        "vertical" (long side up and down); "rotate" adds degrees on top
+        (anticlockwise)."""
+        cfg = self.layout.get("map", {}) or {}
+        orient = str(cfg.get("orient", "north") or "north").lower()
+        x, y = self.timing.x, self.timing.y
+        self._map_c = (float((x.min() + x.max()) / 2), float((y.min() + y.max()) / 2))
+        ang = 0.0
+        if orient in ("horizontal", "vertical") and len(x) > 10:
+            pts = np.column_stack([x - x.mean(), y - y.mean()])
+            evals, evecs = np.linalg.eigh(pts.T @ pts)
+            vx, vy = evecs[:, int(np.argmax(evals))]            # the track's long axis
+            phi = math.atan2(vy, vx)
+            ang = -phi + (math.pi / 2 if orient == "vertical" else 0.0)
+            # of the two ways round, keep the one closer to the recorded orientation
+            ang = (ang + math.pi / 2) % math.pi - math.pi / 2
+        ang += math.radians(float(cfg.get("rotate", 0) or 0))
+        self._map_ang = ang
+
+    def map_rot(self, xx, yy):
+        """World x/y (metres) turned the way the map is shown."""
+        if not self._map_ang:
+            return xx, yy
+        c, s_ = math.cos(self._map_ang), math.sin(self._map_ang)
+        cx, cy = self._map_c
+        dx, dy = np.asarray(xx) - cx, np.asarray(yy) - cy
+        return cx + dx * c - dy * s_, cy + dx * s_ + dy * c
+
     def _layout(self) -> list[Panel]:
         W, H = self.W, self.H
         specs = []     # (key, name, ref_w, ref_h, corner, draw)
         if self.timing.laps:
             specs.append(("laps", "laps", 520, 272 if self.timing.sector_gates else 200, "tl",
                           self._draw_laps))
-        x, y = self.timing.x, self.timing.y
+        x, y = self.map_rot(self.timing.x, self.timing.y)
         aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
         mw, mh = 400, int(min(max(400 * aspect, 190), 400))
         if aspect > 1.2:
@@ -431,10 +464,15 @@ class Hud(StyleMixin):
     def _static_map(self, img, d, p):
         pad = self.S(26)
         x, y = self.timing.x, self.timing.y
-        s = min((p.iw - 2 * pad) / max(np.ptp(x), 1), (p.ih - 2 * pad) / max(np.ptp(y), 1))
-        cx, cy = (x.min() + x.max()) / 2, (y.min() + y.max()) / 2
+        xr, yr = self.map_rot(x, y)
+        s = min((p.iw - 2 * pad) / max(np.ptp(xr), 1), (p.ih - 2 * pad) / max(np.ptp(yr), 1))
+        cx, cy = (xr.min() + xr.max()) / 2, (yr.min() + yr.max()) / 2
         oy = p.iay
-        self._map_xform = lambda xx, yy: (p.iw / 2 + (xx - cx) * s, oy + p.ih / 2 - (yy - cy) * s)
+
+        def xform(xx, yy):
+            rx, ry = self.map_rot(xx, yy)
+            return p.iw / 2 + (rx - cx) * s, oy + p.ih / 2 - (ry - cy) * s
+        self._map_xform = xform
 
         step = max(1, len(x) // 4000)
         pts = list(zip(*self._map_xform(x[::step], y[::step])))
@@ -472,8 +510,10 @@ class Hud(StyleMixin):
         g = self.timing.start_gate
         if g is not None:
             gx, gy = self._map_xform(g.x, g.y)
-            nx, ny = -g.dy, -g.dx          # perpendicular to travel, in screen coords (y flipped)
-            tx, ty = g.dx, -g.dy
+            ca, sa = math.cos(self._map_ang), math.sin(self._map_ang)
+            gdx, gdy = g.dx * ca - g.dy * sa, g.dx * sa + g.dy * ca      # travel direction, turned
+            nx, ny = -gdy, -gdx            # perpendicular to travel, in screen coords (y flipped)
+            tx, ty = gdx, -gdy
             L, Wd = self.S(15), self.S(4.5)
             n = 4
             for i in range(n):          # chequered bar across the track
@@ -825,10 +865,12 @@ class Hud(StyleMixin):
         x = float(np.interp(t, self.tel.t, self.timing.x))
         y = float(np.interp(t, self.tel.t, self.timing.y))
         px, py = self._map_xform(x, y)
-        # face the way the bike is moving across the map
-        xa = float(np.interp(t - 0.25, self.tel.t, self.timing.x))
-        xb = float(np.interp(t + 0.25, self.tel.t, self.timing.x))
-        if abs(xb - xa) > 0.3:
+        # face the way the bike is moving across the map (on screen)
+        xa = self._map_xform(float(np.interp(t - 0.25, self.tel.t, self.timing.x)),
+                             float(np.interp(t - 0.25, self.tel.t, self.timing.y)))[0]
+        xb = self._map_xform(float(np.interp(t + 0.25, self.tel.t, self.timing.x)),
+                             float(np.interp(t + 0.25, self.tel.t, self.timing.y)))[0]
+        if abs(xb - xa) > self.S(0.3):
             self._facing = xb > xa
         x0_, y0_ = self._map_xform(float(np.interp(t - 0.4, self.tel.t, self.timing.x)),
                                    float(np.interp(t - 0.4, self.tel.t, self.timing.y)))

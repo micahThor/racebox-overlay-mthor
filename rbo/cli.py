@@ -53,6 +53,13 @@ def apply_project(args) -> None:
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
+    if getattr(args, "map_orient", None) or getattr(args, "map_rotate", None) is not None:
+        m = dict(args.layout.get("map", {}))
+        if getattr(args, "map_orient", None):
+            m["orient"] = args.map_orient
+        if getattr(args, "map_rotate", None) is not None:
+            m["rotate"] = args.map_rotate
+        args.layout = dict(args.layout, map=m)
     # ghost from another session: command-line options on top of the saved ones
     src = dict(proj.get("ghost_source") or {})
     for opt, key in (("ghost_session", "session"), ("ghost_video", "video"), ("ghost_lap", "lap")):
@@ -526,6 +533,10 @@ def main(argv=None):
         gg.add_argument("--ghost-lap", type=int, metavar="N", help="which lap, numbered as that file numbers them")
         gg.add_argument("--ghost-offset", type=float, metavar="S",
                         help="that video's sync (default: saved by the editor, else auto-sync)")
+        s.add_argument("--map-orient", choices=["north", "horizontal", "vertical"], default=None,
+                       help="turn the track map: north up (as recorded), or its long side across or up and down")
+        s.add_argument("--map-rotate", type=float, default=None, metavar="DEG",
+                       help="turn the track map this many more degrees (anticlockwise)")
         s.add_argument("--speed-max", type=float, default=None, metavar="N",
                        help="top of the speedometer scale (default 70 mph / 120 km/h)")
         r = p.add_argument_group("crew chief radio")

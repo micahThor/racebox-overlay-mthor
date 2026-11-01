@@ -307,17 +307,31 @@ class StyleMixin:
         self.text(d, x, base, num, size, self._ink_on(fill), "m")
 
     def class_key(self, d, p):
-        """Which colour is which class, in a corner of the map (static)."""
+        """Which colour is which class, in the corner of the map with the least
+        track in it (static)."""
         classes = self.shown_classes()
         if len(classes) < 2:
             return
         S = self.S
-        x, y = S(16), p.iay + p.ih - S(14) - (len(classes) - 1) * S(16)
+        bw = S(14) + max(self.measure(c.upper(), 11) for c in classes) + S(14)
+        bh = len(classes) * S(16) + S(4)
+        x, y = self.timing.x, self.timing.y
+        step = max(1, len(x) // 1500)
+        px, py = self._map_xform(x[::step], y[::step])
+        px, py = np.asarray(px), np.asarray(py)
+        best = None
+        for cx in (S(12), p.iw - S(12) - bw):
+            for cy in (p.iay + S(12), p.iay + p.ih - S(12) - bh):
+                n = int(np.sum((px > cx - S(8)) & (px < cx + bw + S(8)) & (py > cy - S(8)) & (py < cy + bh + S(8))))
+                if best is None or n < best[0]:
+                    best = (n, cx, cy)
+        _, kx, ky = best
+        yy = ky + S(13)
         for c in classes:
             col = self.class_colour(c)
-            d.ellipse([x, y - S(9), x + S(9), y], fill=col)
-            self.text(d, x + S(14), y, c.upper(), 11, "dim", track=1)
-            y += S(16)
+            d.ellipse([kx, yy - S(9), kx + S(9), yy], fill=col)
+            self.text(d, kx + S(14), yy, c.upper(), 11, "dim", track=1)
+            yy += S(16)
 
     # ------------------------------------------------------------ shared bits
 
