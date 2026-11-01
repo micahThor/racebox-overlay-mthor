@@ -63,7 +63,7 @@ def sidebar_width(width: int, height: int) -> int:
 
 
 def bottom_height(width: int, height: int) -> int:
-    """Height of the bottom strip: a slim bar, 12% of the video's longer side
+    """Height of the top and bottom strips: a slim bar, 12% of the video's longer side
     (230 px under 1080p, 330 under a 1530x2752 upright clip): room for a row of
     small gauges and the lap timer (its size slider makes it bigger)."""
     return int(round(0.12 * max(width, height) / 2)) * 2
@@ -73,7 +73,7 @@ def strip_size(width: int, height: int, where: str | None) -> tuple[int, int]:
     """(extra width, extra height) the side or bottom panel adds to the frame."""
     if where in ("left", "right"):
         return sidebar_width(width, height), 0
-    if where == "bottom":
+    if where in ("top", "bottom"):
         return 0, bottom_height(width, height)
     return 0, 0
 
@@ -192,21 +192,25 @@ class Hud(StyleMixin):
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
-        # Strips: the frame around the video. Left, right and bottom strips are
-        # always there (their sizes can change); a panel goes in one with layout
-        # {"where": "left" | "right" | "bottom"} ("video" or no setting: on the
-        # picture). The output frame is canvas_w x canvas_h, with the video at
-        # (vid_x0, 0). (`strips` and `sidebar` are accepted for older callers.)
-        self.strips = ["left", "right", "bottom"]
+        # Strips: the frame around the video. Left, right, top and bottom strips
+        # are always there (their sizes can change); a panel goes in one with
+        # layout {"where": "left" | "right" | "top" | "bottom"} ("video" or no
+        # setting: on the picture). The output frame is canvas_w x canvas_h, with
+        # the video at (vid_x0, vid_y0). The top and bottom strips run the full
+        # width; the side strips sit between them, beside the picture.
+        # (`strips` and `sidebar` are accepted for older callers.)
+        self.strips = ["left", "right", "top", "bottom"]
         self.sidebar = "right"
         mult = lambda st: min(max(float((strip_size or {}).get(st, 1.0) or 1.0), 0.4), 2.5)
         even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(width, height)
         self.left_w = even(sw * mult("left"))
         self.right_w = even(sw * mult("right"))
+        self.top_h = even(bottom_height(width, height) * mult("top"))
         self.bottom_h = even(bottom_height(width, height) * mult("bottom"))
-        self.canvas_w, self.canvas_h = width + self.left_w + self.right_w, height + self.bottom_h
-        self.vid_x0 = self.left_w
+        self.canvas_w = width + self.left_w + self.right_w
+        self.canvas_h = self.top_h + height + self.bottom_h
+        self.vid_x0, self.vid_y0 = self.left_w, self.top_h
         self.base_k = min(width, height) / 1080 * scale        # output px per reference px
         self.k = self.base_k * self.ss
         self.units = units
@@ -655,7 +659,7 @@ class Hud(StyleMixin):
             sx0, sy0, sw, sh = self.strip_rect(st)
             items = sorted([it for it in sized if it[0] in side_k and self.in_side(it[0]) == st],
                            key=lambda it: self._side_order(it[0]))
-            if st == "bottom":                  # a row, centred under the video
+            if st in ("top", "bottom"):         # a row, centred over/under the video
                 row = sum(it[8][2] for it in items) + gap * max(len(items) - 1, 0)
                 x = self.vid_x0 + (self.W - row) / 2
                 x = min(max(x, sx0), sx0 + max(sw - row, 0))   # too wide: slide along, stay in frame
@@ -684,7 +688,7 @@ class Hud(StyleMixin):
                 py = m if corner[0] == "t" else H - m - h if corner[0] == "b" else \
                     (H - h) / 2 if corner[1] == "l" else H * 0.40
             px = int(round(min(max(px, 0), max(W - w, 0)))) + self.vid_x0
-            py = int(round(min(max(py, 0), max(H - h, 0))))
+            py = int(round(min(max(py, 0), max(H - h, 0)))) + self.vid_y0
             panels.append(Panel(name, key, px, py, dw, dh, k=k_out * self.ss, ss=self.ss, draw=fn,
                                 vx=L, vy=T, vw=w, vh=h))
         return panels
@@ -692,24 +696,26 @@ class Hud(StyleMixin):
     SIDE_ORDER = ("event_logo", "event", "track", "date", "laps", "race", "map", "ghost", "speed", "gforce",
                   "track_logo")
     # where a panel goes when the layout doesn't say: the race panel in the right
-    # strip, the logos at either end of the bottom strip, the names and date at
-    # the top of the left strip; the rest on the video
+    # strip, the logos at either end of the bottom strip, the names and date in
+    # a row in the top strip; the rest on the video
     DEFAULT_WHERE = {"race": "right", "event_logo": "bottom", "track_logo": "bottom",
-                     "event": "left", "track": "left", "date": "left"}
+                     "event": "top", "track": "top", "date": "top"}
 
     def strip_rect(self, st: str) -> tuple:
         """(x, y, w, h) of a strip in the output frame."""
         if st == "left":
-            return 0, 0, self.left_w, self.H
+            return 0, self.vid_y0, self.left_w, self.H
         if st == "right":
-            return self.left_w + self.W, 0, self.right_w, self.H
-        return 0, self.H, self.canvas_w, self.bottom_h
+            return self.left_w + self.W, self.vid_y0, self.right_w, self.H
+        if st == "top":
+            return 0, 0, self.canvas_w, self.top_h
+        return 0, self.vid_y0 + self.H, self.canvas_w, self.bottom_h
 
     def in_side(self, key: str) -> str:
         """The strip a panel sits in, or "" if it's on the video."""
         w = (self.layout.get(key, {}) or {}).get("where", self.DEFAULT_WHERE.get(key))
         if w == "side":                          # older setting: the first side strip
-            w = next((st for st in self.strips if st != "bottom"), "bottom")
+            w = "right"
         return w if w in self.strips else ""
 
     def _side_order(self, key: str) -> float:
@@ -733,7 +739,7 @@ class Hud(StyleMixin):
                 L, T, R, B = self._trim(name)
                 # the size slider: a share of the strip (100% fills it)
                 share = min(max(float((self.layout.get(key, {}) or {}).get("scale", 1.0) or 1.0), 0.2), 1.0)
-                if st == "bottom":
+                if st in ("top", "bottom"):
                     k = (sh - 2 * m) / max(rh - T - B, 1) * share
                     if name == "text":           # names and the date: no bigger than a strip's width would make them
                         k = min(k, (self.left_w - 2 * m) / max(rw, 1) * share)
@@ -744,7 +750,7 @@ class Hud(StyleMixin):
             if not items:
                 continue
             total = sum(h for *_, h in items) + gap * (len(items) - 1)
-            room = (sw if st == "bottom" else sh) - 2 * m
+            room = (sw if st in ("top", "bottom") else sh) - 2 * m
             f = min(1.0, room / max(total, 1))
             out.update({key: k * f for key, k, _ in items})
         return out
@@ -780,7 +786,8 @@ class Hud(StyleMixin):
 
     def frame_info(self) -> dict:
         """The output frame and its strips, for the editor."""
-        return {"w": self.canvas_w, "h": self.canvas_h, "vx": self.vid_x0, "vw": self.W, "vh": self.H,
+        return {"w": self.canvas_w, "h": self.canvas_h, "vx": self.vid_x0, "vy": self.vid_y0,
+                "vw": self.W, "vh": self.H,
                 "strips": {st: list(self.strip_rect(st)) for st in self.strips}}
 
     # ------------------------------------------------------------ static layer
@@ -1004,7 +1011,7 @@ class Hud(StyleMixin):
             self.paste_ghost(arr, ghost_frame(g.ref_vt, w, h))
             atlas = Image.fromarray(arr, "RGBA")
         out = Image.new("RGBA", (self.canvas_w, self.canvas_h), self.side_colour() + (255,))
-        out.paste(frame.convert("RGB"), (self.vid_x0, 0))
+        out.paste(frame.convert("RGB"), (self.vid_x0, self.vid_y0))
         out.alpha_composite(self.frame_image())
         for p in self.panels:
             out.alpha_composite(atlas.crop((p.vx, p.ay + p.vy, p.vx + p.vw, p.ay + p.vy + p.vh)), (p.x, p.y))

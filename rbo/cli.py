@@ -61,7 +61,7 @@ def apply_project(args) -> None:
             k, where = (x.strip() for x in item.split("=", 1))
             if k not in ("laps", "map", "speed", "gforce", "ghost", "race",
                          "event_logo", "track_logo", "event", "track", "date") or \
-                    where not in ("left", "right", "bottom", "video"):
+                    where not in ("left", "right", "top", "bottom", "video"):
                 sys.exit(f"--place: don't know {item!r}")
             c = dict(lay.get(k, {}))
             c["where"] = where
@@ -565,7 +565,7 @@ def main(argv=None):
         s.add_argument("--place", metavar="LIST", default=None,
                        help="put panels in the frame round the video, e.g. race=right,laps=bottom "
                             "(panels: laps,map,speed,gforce,ghost,race,event_logo,track_logo,event,track,date; "
-                            "places: left,right,bottom, or video)")
+                            "places: left,right,top,bottom, or video)")
         s.add_argument("--event-name", metavar="TEXT", help="the event (the organisation running it); '' = off")
         s.add_argument("--track-name", metavar="TEXT", help="the track's name (default: from the RaceBox file); '' = off")
         s.add_argument("--date", metavar="TEXT", help="date and time to show (default: when the session started); '' = off")

@@ -157,7 +157,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     frame_png = os.path.join(frame_dir, "frame.png")
     hud.frame_image().save(frame_png)
     fi = 3 if radio else 2                     # the frame's input number
-    parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:0:color=0x{c}[pad]")
+    parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:{hud.vid_y0}:color=0x{c}[pad]")
     parts.append(f"[pad][{fi}:v]overlay=0:0:shortest=1:format=auto[base]")
     prev = "base"
     for i, p in enumerate(hud.panels):

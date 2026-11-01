@@ -162,7 +162,7 @@ class Studio:
 
     def _strips(self) -> list:
         """The strips round the video (always all three; only their sizes change)."""
-        return ["left", "right", "bottom"]
+        return ["left", "right", "top", "bottom"]
 
     def info(self) -> dict:
         """The event name, track name, date and logos (see project.session_info)."""
@@ -177,10 +177,11 @@ class Studio:
         even = lambda v: int(round(v / 2)) * 2
         sw = sidebar_width(W, H)
         lw, rw = even(sw * mult("left")), even(sw * mult("right"))
-        bh = even(bottom_height(W, H) * mult("bottom"))
+        th, bh = even(bottom_height(W, H) * mult("top")), even(bottom_height(W, H) * mult("bottom"))
         cw = W + lw + rw
-        return {"w": cw, "h": H + bh, "vx": lw, "vw": W, "vh": H,
-                "strips": {"left": [0, 0, lw, H], "right": [lw + W, 0, rw, H], "bottom": [0, H, cw, bh]}}
+        return {"w": cw, "h": th + H + bh, "vx": lw, "vy": th, "vw": W, "vh": H,
+                "strips": {"left": [0, th, lw, H], "right": [lw + W, th, rw, H], "top": [0, 0, cw, th],
+                           "bottom": [0, th + H, cw, bh]}}
 
     def _traffic_s(self) -> float:
         return float((self.proj.get("call_settings") or {}).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
@@ -373,7 +374,7 @@ class Studio:
         if slot and gp:
             ghost["slot"] = [slot[0], slot[1] - gp.ay, slot[2], slot[3]]   # relative to the panel
         return {"pw": h.canvas_w, "ph": h.canvas_h, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
-                "video_rect": [h.vid_x0, 0, pw, ph],
+                "video_rect": [h.vid_x0, h.vid_y0, pw, ph],
                 "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()),
                 "frame": f"/api/frame.png?k={id(h)}",
                 "panels": [p for p in h.describe() if p["name"] != "none"],

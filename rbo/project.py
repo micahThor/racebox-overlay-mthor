@@ -33,9 +33,9 @@ still win over anything in the file.
       "race_number": "96",          your start number in that race
       "race_class": false,          tower shows only your class
       "race_field": true,           the other riders as dots on the map
-      "strip_size": {"left": 1.0, "right": 1.4, "bottom": 0.8},   the frame round the video
-                                    (left, right and bottom strips, always on); a panel goes
-                                    in one with "where": "left"/"right"/"bottom" ("video" = on it)
+      "strip_size": {"left": 1.0, "right": 1.4, "top": 0.6, "bottom": 0.8},   the frame round
+                                    the video (four strips, always on); a panel goes in one
+                                    with "where": "left"/"right"/"top"/"bottom" ("video" = on it)
       "info": {"event": "SFL MiniGP Round 6", "track": "...", "date": "...",
                "event_logo": "/path/logo.png", "track_logo": "/path/track.png"}
                                     track and date start from the RaceBox file; "" = off

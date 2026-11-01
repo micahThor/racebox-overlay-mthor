@@ -3,7 +3,7 @@ piece in the theme's style.
 
 Whatever size each strip is, they share one fill, one texture and one outline
 that runs round the outside and hugs the picture, so the three read as a single
-border. The picture's lower corners are shaped to match the theme (rounded,
+border. The picture's corners are shaped to match the theme (rounded,
 cut, stepped or square), and each theme adds its own trim along the opening.
 """
 from __future__ import annotations
@@ -34,39 +34,37 @@ def frame_colour(theme: dict) -> tuple:
     return tuple(int(v * 0.8) for v in bg[:3])
 
 
-def _opening(x0, x1, H, e, corner, r, top=-4.0):
-    """The picture's outline grown outwards by e: down the left side, round the
-    lower corners, along the bottom and up the right side (open at the top)."""
-    pts = [(x0 - e, top)]
-    if corner == "round" and r > 0:
-        R = r + e
-        n = max(8, int(R / 3))
-        for i in range(n + 1):                     # lower left: 180° -> 90°
-            a = math.pi - (math.pi / 2) * i / n
-            pts.append((x0 + r + R * math.cos(a), H - r + R * math.sin(a)))
-        for i in range(n + 1):                     # lower right: 90° -> 0°
-            a = math.pi / 2 - (math.pi / 2) * i / n
-            pts.append((x1 - r + R * math.cos(a), H - r + R * math.sin(a)))
-    elif corner == "cut" and r > 0:
+def _corner(kind, r, e):
+    """One corner of the opening as offsets from the picture's corner, for the
+    lower-left one (frame to the left and below, y down), from its left side
+    round to its bottom edge."""
+    if kind == "round" and r > 0:
+        R, n = r + e, max(8, int((r + e) / 3))
+        return [(r + R * math.cos(math.pi - (math.pi / 2) * i / n), -r + R * math.sin(math.pi - (math.pi / 2) * i / n))
+                for i in range(n + 1)]
+    if kind == "cut" and r > 0:
         t = e * math.tan(math.pi / 8)
-        pts += [(x0 - e, H - r + t), (x0 + r - t, H + e), (x1 - r + t, H + e), (x1 + e, H - r + t)]
-    elif corner == "step" and r > 0:
+        return [(-e, -r + t), (r - t, e)]
+    if kind == "step" and r > 0:
         s = r / 2
-        pts += [(x0 - e, H + e - 2 * s), (x0 - e + s, H + e - 2 * s), (x0 - e + s, H + e - s),
-                (x0 - e + 2 * s, H + e - s), (x0 - e + 2 * s, H + e),
-                (x1 + e - 2 * s, H + e), (x1 + e - 2 * s, H + e - s), (x1 + e - s, H + e - s),
-                (x1 + e - s, H + e - 2 * s), (x1 + e, H + e - 2 * s)]
-    else:
-        pts += [(x0 - e, H + e), (x1 + e, H + e)]
-    pts.append((x1 + e, top))
-    return pts
+        return [(-e, e - 2 * s), (-e + s, e - 2 * s), (-e + s, e - s), (-e + 2 * s, e - s), (-e + 2 * s, e)]
+    return [(-e, e)]
 
 
-def _outline(x0, x1, H, CW, CH, e, corner, r):
-    """One closed line e in from every edge of the frame: round the outside and
-    back along the picture."""
-    inner = _opening(x0, x1, H, e, corner, r, top=e)
-    return [(x0 - e, e), (e, e), (e, CH - e), (CW - e, CH - e), (CW - e, e)] + inner[::-1] + [(x0 - e, e)]
+def _opening(x0, y0, x1, y1, e, kind, r):
+    """The picture's outline grown outwards by e, all four corners shaped the
+    theme's way, as a closed loop (clockwise from the top-left corner)."""
+    base = _corner(kind, r, e)
+    pts = []
+    for cx, cy, sx, sy, flip in ((x0, y0, -1, -1, False), (x1, y0, 1, -1, True),
+                                 (x1, y1, 1, 1, False), (x0, y1, -1, 1, True)):
+        c = [(cx - sx * dx, cy + sy * dy) for dx, dy in base]
+        pts += c[::-1] if flip else c
+    return pts + pts[:2]          # (round past the start so the line closes cleanly)
+
+
+def _outer(CW, CH, e):
+    return [(e, e), (CW - e, e), (CW - e, CH - e), (e, CH - e), (e, e), (CW - e, e)]
 
 
 def _glow_line(img, pts, col, width, blur):
@@ -89,7 +87,8 @@ def draw_frame(hud) -> Image.Image:
     U = lambda v: max(1, int(round(v * u)))
     U1 = lambda v: max(1, int(round(v * u1)))
     CW, CH = w1 * ss, h1 * ss
-    x0, x1, H = hud.vid_x0 * ss, (hud.vid_x0 + hud.W) * ss, hud.H * ss
+    x0, x1 = hud.vid_x0 * ss, (hud.vid_x0 + hud.W) * ss
+    y0, y1 = hud.vid_y0 * ss, (hud.vid_y0 + hud.H) * ss
     base = np.array(frame_colour(th), np.float32)
     light = base.sum() > 382
 
@@ -133,7 +132,7 @@ def draw_frame(hud) -> Image.Image:
     r = {"round": U(max(th.get("radius", 18), 6) * 1.25), "cut": U(30), "step": U(12), "square": 0}[corner]
     # the picture shows through the opening
     mask = Image.new("L", (CW, CH), 255)
-    ImageDraw.Draw(mask).polygon(_opening(x0, x1, H, 0, corner, r), fill=0)
+    ImageDraw.Draw(mask).polygon(_opening(x0, y0, x1, y1, 0, corner, r), fill=0)
     if ss > 1:
         mask = mask.reduce(ss)
     fill.putalpha(mask)
@@ -141,48 +140,56 @@ def draw_frame(hud) -> Image.Image:
 
     acc, edge, ring, text = C["accent"], C["edge"], C["ring"], C["text"]
     blend = lambda col, a: tuple(int(base[i] * (1 - a) + col[i] * a) for i in range(3)) + (255,)
-    op = lambda e: _opening(x0, x1, H, e, corner, r)
-    outline = lambda e: _outline(x0, x1, H, CW, CH, e, corner, r)
+    op = lambda e: _opening(x0, y0, x1, y1, e, corner, r)
+    outline = lambda e: (_outer(CW, CH, e), op(e))     # round the outside, and round the picture
 
     if shape == "slant":                           # TV broadcast
-        d.line(outline(U(9)), fill=blend((255, 255, 255), 0.10), width=U(1.5), joint="curve")
+        for pts in outline(U(9)):
+            d.line(pts, fill=blend((255, 255, 255), 0.10), width=U(1.5), joint="curve")
         d.line(op(U(4)), fill=blend((255, 255, 255), 0.55), width=U(2), joint="curve")
-        y = H + U(10)                              # the red band along the bottom of the picture
+        y = y1 + U(10)                             # the red band along the bottom of the picture
         d.polygon([(x0 + r, y - U(4)), (x1 - r, y - U(4)), (x1 - r - U(8), y + U(5)), (x0 + r + U(8), y + U(5))],
                   fill=acc)
         d.rectangle([0, CH - U(7), CW, CH], fill=acc)
+        d.rectangle([0, 0, CW, U(7)], fill=acc)
     elif shape == "bracket":                       # fighter HUD
         dim = blend(acc, 0.35)
-        d.line(outline(U(10)), fill=dim, width=U(1.5))
+        for pts in outline(U(10)):
+            d.line(pts, fill=dim, width=U(1.5))
         d.line(op(U(6)), fill=acc, width=U(2))
         L, w, e = U(64), U(4), U(16)               # corner brackets round the picture
-        for (cx, cy, dx, dy) in ((x0 - e, H + e, 1, -1), (x1 + e, H + e, -1, -1)):
+        for (cx, cy, dx, dy) in ((x0 - e, y0 - e, 1, 1), (x1 + e, y0 - e, -1, 1),
+                                 (x1 + e, y1 + e, -1, -1), (x0 - e, y1 + e, 1, -1)):
             d.line([(cx, cy + dy * L), (cx, cy), (cx + dx * L, cy)], fill=acc, width=w, joint="curve")
-        for (cx, dx) in ((x0 - e, 1), (x1 + e, -1)):
-            d.line([(cx, e + L), (cx, e), (cx + dx * L, e)], fill=acc, width=w, joint="curve")
         step = U(30)                               # a ruler under the picture
         for i, x in enumerate(range(int(x0 + U(40)), int(x1 - U(40)), step)):
-            d.line([(x, H + U(14)), (x, H + U(14) + (U(14) if i % 5 == 0 else U(7)))], fill=dim, width=U(1.5))
+            d.line([(x, y1 + U(14)), (x, y1 + U(14) + (U(14) if i % 5 == 0 else U(7)))], fill=dim, width=U(1.5))
     elif shape == "pixel":                         # retro arcade
-        d.line(outline(U(8)), fill=blend(C["dim"], 0.6), width=U(3))
+        for pts in outline(U(8)):
+            d.line(pts, fill=blend(C["dim"], 0.6), width=U(3))
         d.line(op(U(7)), fill=acc, width=U(6))
         d.line(op(U(16)), fill=blend(C["dim"], 0.8), width=U(2))
     elif shape == "bezel":                         # vintage gauges: gold double rule
         gold = tuple(ring[:3]) + (255,)
-        d.line(outline(U(12)), fill=gold, width=U(2), joint="curve")
-        d.line(outline(U(17)), fill=blend(gold[:3], 0.45), width=U(1), joint="curve")
+        for pts in outline(U(12)):
+            d.line(pts, fill=gold, width=U(2), joint="curve")
+        for pts in outline(U(17)):
+            d.line(pts, fill=blend(gold[:3], 0.45), width=U(1), joint="curve")
         d.line(op(U(6)), fill=gold, width=U(4), joint="curve")
         d.line(op(U(13)), fill=blend((0, 0, 0), 0.5), width=U(1.5), joint="curve")
     elif not th.get("bg", (0, 0, 0, 0))[3] and not edge[3]:     # minimal: just a fine line
         d.line(op(U(6)), fill=blend((255, 255, 255), 0.35), width=U(1.5), joint="curve")
     elif edge[3] >= 100:                           # neon: glowing rims
         _glow_line(img, op(U(6)), acc, U(3), U(8))
-        _glow_line(img, outline(U(10)), acc, U(1.5), U(6))
+        for pts in outline(U(10)):
+            _glow_line(img, pts, acc, U(1.5), U(6))
         d = ImageDraw.Draw(img)
-        d.line(outline(U(10)), fill=blend(acc, 0.55), width=U(1.5), joint="curve")
+        for pts in outline(U(10)):
+            d.line(pts, fill=blend(acc, 0.55), width=U(1.5), joint="curve")
         d.line(op(U(6)), fill=acc, width=U(3), joint="curve")
     else:                                          # carbon, daylight
-        d.line(outline(U(10)), fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")
+        for pts in outline(U(10)):
+            d.line(pts, fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")
         d.line(op(U(5)), fill=tuple(acc[:3]) + (255,), width=U(3), joint="curve")
         d.line(op(U(11)), fill=blend((255, 255, 255) if not light else (0, 0, 0), 0.07), width=U(1), joint="curve")
     if ss > 1:

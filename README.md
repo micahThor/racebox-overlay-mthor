@@ -370,38 +370,40 @@ makes a RaceBox session with the lap times of #96 in Speedhive session
 
 ## The frame round the video
 
-Every render has a frame round the picture: strips on the left, the right and
-underneath, drawn as one piece in the theme's style so they read as a single
+Every render has a frame round the picture: strips on the left, the right,
+above and underneath, drawn as one piece in the theme's style so they read as a single
 border whatever size each strip is. They share one fill and texture (carbon
 weave, broadcast pinstripes, a HUD grid, arcade scanlines, vintage leather
 grain), one outline round the outside, and a trim hugging the picture, whose
-lower corners are shaped to match (rounded, cut, stepped or square). The
+corners are shaped to match (rounded, cut, stepped or square). The
 output frame grows to make room (the video itself isn't stretched or cropped):
 
 - each side strip is the width that would make an upright video 4:5 (a
   1530x2752 GO 3S clip gets 672 pixels a side) or a wide one 21:9 (1080p gets
   600 pixels);
-- the bottom strip is a slim bar under everything, 12% of the video's longer
-  side (230 pixels under 1080p, 330 under a 1530x2752 upright clip), sized
-  for a row of small panels like speed, the lap timer and lean.
+- the top and bottom strips are slim bars across the full width, 12% of the
+  video's longer side (230 pixels for 1080p, 330 for a 1530x2752 upright
+  clip), sized for a row of small panels like speed, the lap timer and lean.
+  The side strips sit between them, beside the picture.
 
 The strips are always on; make each one wider or narrower with its slider
 (50-200%) under **Frame round the video** in **Look & layout**. A bigger strip
 makes the output bigger and its full-size panels with it (a tall panel like
 the race panel is limited by the strip's height). From the command line the
 sizes come from the project file (`"strip_size": {"left": 1, "right": 1.4,
-"bottom": 0.8}`).
+"top": 0.6, "bottom": 0.8}`).
 
 Put any panel in a strip: choose it under the panel in the Panels list ("On
 the video", "Left strip", ...), or drag the panel into the strip on the
 preview. Drag along a strip to change the order, or back onto the video to
 take it out. Panels in a side strip stack top to bottom, each as wide as the
-strip; panels in the bottom strip sit side by side, each as tall as it, as a
-row centred under the video (not the whole frame); all of a strip's panels
+strip; panels in the top or bottom strip sit side by side, each as tall as
+it, as a row centred over or under the video (not the whole frame); all of a strip's panels
 shrink together if they don't fit. A panel's size slider (or its corner
 handle on the preview) works as a share of its strip, up to 100%. Unless you
 move them, the race panel starts in the right strip, the logos at either end
-of the bottom strip and the event name, track name and date in the left strip.
+of the bottom strip and the event name, track name and date in a row in the
+top strip.
 
 From the command line: `--place race=right,speed=bottom,gforce=bottom`
 (`video` puts a panel back on the picture).

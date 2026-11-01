@@ -355,7 +355,7 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <span class="pct" id="scaleV"></span></div>
 
       <h2>Frame round the video</h2>
-      <p class="hint">Strips left, right and under the picture, styled as one frame in the theme, for panels
+      <p class="hint">Strips on all four sides of the picture, styled as one frame in the theme, for panels
         that shouldn't cover the picture. Make each strip wider or narrower here. Put a panel in a strip
         below, or drag it there on the video.</p>
       <div id="stripSizes"></div>
@@ -424,7 +424,7 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <div class="row"><select id="rcRider" aria-label="Your rider" style="flex:1"></select></div>
         <h2>Map &amp; standings panel</h2>
         <div class="seg" id="rcSide" role="group" aria-label="Where the race panel goes">
-          <button data-side="">On the video</button><button data-side="left">Left</button><button data-side="right">Right</button><button data-side="bottom">Bottom</button></div>
+          <button data-side="">On the video</button><button data-side="left">Left</button><button data-side="right">Right</button><button data-side="top">Top</button><button data-side="bottom">Bottom</button></div>
         <p class="hint" style="margin-top:6px">Left, right or bottom puts it in that strip of the frame round the
           picture. Other panels can go in strips too, in Look &amp; layout.</p>
         <label class="row" style="margin-top:10px;gap:8px"><input type="checkbox" id="rcClass">
@@ -573,7 +573,7 @@ function attachResize(el, h) {
     else cfg.h = r3(Math.min(Math.max((cfg.h ?? 1) * fh, 0.4), 3));
     const vr = vidRect();                                       // keep the top-left corner where it is
     cfg.x = +((el.offsetLeft - vr.x) / vr.w).toFixed(4);
-    cfg.y = +(el.offsetTop / vr.h).toFixed(4);
+    cfg.y = +((el.offsetTop - vr.y) / vr.h).toFixed(4);
     P.layout[k] = cfg;
     save({ layout: P.layout }); renderLook();
   });
@@ -600,13 +600,13 @@ function attachDrag(el) {
     const strip = stripAt(cx, cy);
     if (strip) {                            // dropped in a strip: it goes there, in this order
       cfg.where = strip;
-      cfg.side_order = +((strip === "bottom" ? cx / stage.clientWidth : cy / stage.clientHeight)).toFixed(3);
+      cfg.side_order = +((strip === "bottom" || strip === "top" ? cx / stage.clientWidth : cy / stage.clientHeight)).toFixed(3);
     } else {                                // on the video: where it was dropped
       cfg.where = "video"; delete cfg.side_order;
       const x = Math.min(Math.max(el.offsetLeft, vr.x), vr.x + vr.w - el.offsetWidth);
-      const y = Math.min(Math.max(el.offsetTop, 0), vr.h - el.offsetHeight);
+      const y = Math.min(Math.max(el.offsetTop, vr.y), vr.y + vr.h - el.offsetHeight);
       cfg.x = +((x - vr.x) / vr.w).toFixed(4);                    // a fraction of the video
-      cfg.y = +(y / vr.h).toFixed(4);
+      cfg.y = +((y - vr.y) / vr.h).toFixed(4);
     }
     P.layout[k] = cfg;
     save({ layout: P.layout }); renderLook();
@@ -720,12 +720,12 @@ vid.addEventListener("timeupdate", updatePlayhead);
 /* the output frame: the video plus any strips beside/under it */
 function canvas() {
   const c = S && S.video && S.video.canvas;
-  return c || { w: S.video.width, h: S.video.height, vx: 0, vw: S.video.width, vh: S.video.height, strips: {} };
+  return c || { w: S.video.width, h: S.video.height, vx: 0, vy: 0, vw: S.video.width, vh: S.video.height, strips: {} };
 }
 function hasStrips() { return Object.keys(canvas().strips || {}).length > 0; }
 function vidRect() {                        // the video's part of the stage, in stage pixels
   const c = canvas(), k = stage.clientWidth / c.w;
-  return { x: c.vx * k, w: c.vw * k, h: c.vh * k };
+  return { x: c.vx * k, y: (c.vy || 0) * k, w: c.vw * k, h: c.vh * k };
 }
 function stripAt(cx, cy) {                  // which strip a point (stage px) is in, or ""
   const c = canvas(), k = stage.clientWidth / c.w;
@@ -737,7 +737,7 @@ function stripAt(cx, cy) {                  // which strip a point (stage px) is
 function layoutVideo() {
   const c = canvas();
   if (hasStrips()) {
-    Object.assign(vid.style, { position: "absolute", top: "0",
+    Object.assign(vid.style, { position: "absolute", top: ((c.vy || 0) / c.h * 100) + "%",
       left: (c.vx / c.w * 100) + "%", width: (c.vw / c.w * 100) + "%", height: (c.vh / c.h * 100) + "%" });
   } else {
     Object.assign(vid.style, { position: "", top: "", height: "", left: "", width: "" });
@@ -885,18 +885,18 @@ document.querySelectorAll("[data-gn]").forEach(b => b.addEventListener("click", 
 }));
 
 /* where a panel goes when its layout doesn't say (as in hud.py DEFAULT_WHERE) */
-const DEFAULT_WHERE = { race: "right", event_logo: "bottom", track_logo: "bottom", event: "left", track: "left", date: "left" };
+const DEFAULT_WHERE = { race: "right", event_logo: "bottom", track_logo: "bottom", event: "top", track: "top", date: "top" };
 function whereOf(key) {
   const w = (P.layout[key] || {}).where ?? DEFAULT_WHERE[key] ?? "";
-  return ["left", "right", "bottom"].includes(w) ? w : "";
+  return ["left", "right", "top", "bottom"].includes(w) ? w : "";
 }
 function renderLook() {
   renderInfo();
   const sz = $("#stripSizes"); sz.innerHTML = "";
-  for (const st of ["left", "right", "bottom"]) {                 // how big each strip is
+  for (const st of ["left", "right", "top", "bottom"]) {                 // how big each strip is
     const v = (P.strip_size || {})[st] || 1;
     const row = document.createElement("div"); row.className = "sens";
-    row.innerHTML = `<div class="top"><span>${st[0].toUpperCase() + st.slice(1)} strip ${st === "bottom" ? "height" : "width"}</span>
+    row.innerHTML = `<div class="top"><span>${st[0].toUpperCase() + st.slice(1)} strip ${st === "bottom" || st === "top" ? "height" : "width"}</span>
       <span class="val">${Math.round(v * 100)}%</span></div>
       <input type="range" min="0.5" max="2" step="0.05" value="${v}" aria-label="${st} strip size">`;
     const r = row.querySelector("input");
