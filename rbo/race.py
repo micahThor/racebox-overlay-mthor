@@ -388,6 +388,15 @@ class Race:
                 "finished": me_done >= len(self.me.cross), "started": t >= self.start,
                 "final_lap": me_done == self.total_laps - 1}
 
+    @property
+    def classes(self) -> list[str]:
+        """Classes in this race, in the order their best rider finished."""
+        out = []
+        for r in sorted(self.riders, key=lambda r: r.finish_pos):
+            if r.cls not in out:
+                out.append(r.cls)
+        return out
+
     def field(self, t: float, cls: str | None = None) -> list[tuple[str, float]]:
         """(number, fraction of the lap from the line) for every other rider
         still racing at time t, for dots on the map. Estimated between line

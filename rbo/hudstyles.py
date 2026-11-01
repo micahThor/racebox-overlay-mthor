@@ -14,8 +14,10 @@ from PIL import Image, ImageDraw
 GAUGE_START = 135.0
 GAUGE_SWEEP = 270.0
 
-CLASS_COLOURS = [(255, 204, 0), (0, 180, 255), (40, 214, 110), (255, 120, 40), (190, 110, 255),
-                 (255, 80, 150)]
+CLASS_COLOURS = [(255, 204, 0), (0, 190, 255), (50, 220, 110), (255, 128, 40), (190, 110, 255),
+                 (255, 80, 160)]
+CLASS_COLOURS_LIGHT = [(190, 136, 0), (0, 118, 200), (20, 140, 70), (214, 88, 10), (128, 58, 200),
+                       (200, 40, 120)]          # same hues, darker, for light cards
 ARCADE_ROWS = [(255, 236, 50), (0, 236, 255), (70, 255, 110), (255, 140, 40), (190, 120, 255),
                (255, 255, 255)]
 
@@ -236,30 +238,86 @@ class StyleMixin:
                       outline=(0, 0, 0, 120) if not self.light() else self.C["edge"], width=w + S(3))
             d.ellipse([x - r, y - r, x + r, y + r], outline=col, width=w)
 
-    def field_dot(self, d, x, y):
-        """Another rider on the map (race mode)."""
+    # ------------------------------------------------------------ classes
+
+    def shown_classes(self) -> list[str]:
+        race = getattr(self, "race", None)
+        if race is None:
+            return []
+        return [self.race_cls] if self.race_cls else race.classes
+
+    def multi_class(self) -> bool:
+        return len(self.shown_classes()) > 1
+
+    def class_colour(self, cls: str | None):
+        """A rider's class colour (the same on the map and in the tower)."""
+        race = getattr(self, "race", None)
+        classes = race.classes if race is not None else []
+        i = classes.index(cls) if cls in classes else (sum(map(ord, cls or "")) if cls else 0)
+        pal = CLASS_COLOURS_LIGHT if self.light() else CLASS_COLOURS
+        return pal[i % len(pal)] + (255,)
+
+    @staticmethod
+    def _ink_on(c):
+        """Dark or white text, whichever reads on colour c."""
+        lum = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+        return (16, 16, 20, 255) if lum > 150 else (255, 255, 255, 255)
+
+    def field_dot(self, d, x, y, num: str = "", cls: str | None = None):
+        """Another rider on the map (race mode): their number on a tag in their
+        class colour (or a neutral colour when only one class is racing)."""
         S, kind = self.S, self.theme.get("marker", "bike")
-        if kind == "target":                     # HUD: small open diamonds
-            r, w = S(6), max(1, S(2))
-            dia = [(x, y - r), (x + r, y), (x, y + r), (x - r, y)]
-            d.polygon(dia, outline=self.C["stroke_color"], width=w + S(2))
-            d.polygon(dia, outline=self.C["dim"], width=w)
-        elif kind == "sprite":                   # arcade: pixel blocks
-            q = max(1, S(3.5))
-            d.rectangle([x - q - S(1.5), y - q - S(1.5), x + q + S(1.5), y + q + S(1.5)], fill=(10, 0, 24, 255))
-            d.rectangle([x - q, y - q, x + q, y + q], fill=self.C["dim"])
+        multi = self.multi_class()
+        size = 12
+        f = self.font(size)
+        w = max(self.measure(num, size) + S(9), S(18))
+        h = S(17)
+        x0, y0, x1, y1 = x - w / 2, y - h / 2, x + w / 2, y + h / 2
+        base = y + f.size * 0.36
+        if multi:
+            fill = self.class_colour(cls)
+        elif kind == "enamel":
+            fill = self.C["text"]
+        elif kind == "badge":
+            fill = (255, 255, 255, 255)
         else:
-            r, ring = S(6), max(1, S(2))
-            if kind == "enamel":                 # vintage: ink dots with a brass rim
-                fill, rim = self.C["text"], self.C["ring"]
-            elif kind == "badge":                # broadcast: white dots, dark rim
-                fill, rim = (255, 255, 255, 255), (11, 15, 30, 255)
+            fill = self.C["dim"] if self.light() else (225, 230, 238, 255)
+        if kind == "target":                     # HUD: outlined tag, text in the class colour
+            col = fill if multi else self.C["dim"]
+            sc = self.C["stroke_color"]
+            d.rectangle([x0 - S(1.5), y0 - S(1.5), x1 + S(1.5), y1 + S(1.5)], outline=sc, width=S(2))
+            d.rectangle([x0, y0, x1, y1], fill=(0, 22, 8, 170), outline=col, width=max(1, S(1.5)))
+            self.text(d, x, base, num, size, col, "m")
+            return
+        ring = max(1, S(2))
+        if kind == "sprite":                     # arcade: square-cornered tag, dark outline
+            rim = (10, 0, 24, 255)
+            d.rectangle([x0 - ring, y0 - ring, x1 + ring, y1 + ring], fill=rim)
+            d.rectangle([x0, y0, x1, y1], fill=fill)
+        else:
+            if kind == "enamel":
+                rim = self.C["ring"]             # vintage: brass rim
+            elif kind == "badge":
+                rim = (11, 15, 30, 255)
             else:
-                fill = self.C["dim"] if self.light() else (225, 230, 238, 255)
                 rim = self.C["bg"] if self._has_card() else (0, 0, 0, 200)
                 rim = tuple(rim[:3]) + (255,)
-            d.ellipse([x - r - ring, y - r - ring, x + r + ring, y + r + ring], fill=rim)
-            d.ellipse([x - r, y - r, x + r, y + r], fill=fill)
+            d.rounded_rectangle([x0 - ring, y0 - ring, x1 + ring, y1 + ring], radius=(h + 2 * ring) / 2, fill=rim)
+            d.rounded_rectangle([x0, y0, x1, y1], radius=h / 2, fill=fill)
+        self.text(d, x, base, num, size, self._ink_on(fill), "m")
+
+    def class_key(self, d, p):
+        """Which colour is which class, in a corner of the map (static)."""
+        classes = self.shown_classes()
+        if len(classes) < 2:
+            return
+        S = self.S
+        x, y = S(16), p.iay + p.ih - S(14) - (len(classes) - 1) * S(16)
+        for c in classes:
+            col = self.class_colour(c)
+            d.ellipse([x, y - S(9), x + S(9), y], fill=col)
+            self.text(d, x + S(14), y, c.upper(), 11, "dim", track=1)
+            y += S(16)
 
     # ------------------------------------------------------------ shared bits
 
@@ -690,9 +748,7 @@ class StyleMixin:
             d.rectangle([bx0, ry + S(4), bx1, ry + rh - S(4)], fill=white)
             f = self.font(16)
             self.text(d, (bx0 + bx1) / 2, base, pos_txt, 16, self.C["accent"] if me else (14, 18, 34, 255), "m")
-            cls = r["cls"] or ""
-            cc = CLASS_COLOURS[sum(map(ord, cls)) % len(CLASS_COLOURS)] + (255,)
-            d.rectangle([S(48), ry + S(5), S(52), ry + rh - S(5)], fill=cc)
+            d.rectangle([S(48), ry + S(5), S(52), ry + rh - S(5)], fill=self.class_colour(r["cls"]))
             num_x, name_x = S(58), S(114)
         elif style == "hud":
             pos_txt = f"{i + 1:02d}"
@@ -702,7 +758,7 @@ class StyleMixin:
             self.text(d, pad + S(22), base, pos_txt, 16, fg, "r")
         elif style == "arcade":
             pos_txt = _ordinal(i + 1)
-            col = ARCADE_ROWS[i % len(ARCADE_ROWS)] + (255,)
+            col = self.class_colour(r["cls"]) if self.multi_class() else ARCADE_ROWS[i % len(ARCADE_ROWS)] + (255,)
             fg, dim = col, col
             name = name[:8]
             if me and (r["moved"] == 0 or int(t * 4) % 2 == 0):      # blinks after a pass
@@ -724,6 +780,8 @@ class StyleMixin:
                 self.box(d, (x0, ry + S(2), x1, ry + rh - S(2)), fill=self.tint("white", 0.05), radius=S(7))
         if style == "default":
             self.text(d, pad + S(22), base, pos_txt, 17, fg, "r")
+        if style in ("default", "hud", "pitboard") and self.multi_class():   # class colour bar
+            d.rectangle([S(9), ry + S(5), S(12), ry + rh - S(5)], fill=self.class_colour(r["cls"]))
         if r["moved"]:
             up = r["moved"] > 0
             col = self.C["green"] if up else self.C["red"]

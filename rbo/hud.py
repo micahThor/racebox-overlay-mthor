@@ -406,6 +406,8 @@ class Hud(StyleMixin):
             line = list(zip(*self._map_xform(x[m], y[m])))
             dd = self.timing.dist[m] - self.timing.dist[m][0]           # for placing the field
             self._lap_path = (dd / max(dd[-1], 1e-6), x[m], y[m])
+            if self.race is not None and self.race_field:
+                self.class_key(d, p)
             if self.theme.get("map_glow", True):        # soft glow under the racing line
                 layer = Image.new("RGBA", img.size, tuple(self.C["line"][:3]) + (0,))
                 ImageDraw.Draw(layer).line(line, fill=tuple(self.C["line"][:3]) + (110,),
@@ -795,7 +797,7 @@ class Hud(StyleMixin):
             fr, bx, by = self._lap_path
             for num, f in self.race.field(t, self.race_cls):
                 fx, fy = self._map_xform(float(np.interp(f, fr, bx)), float(np.interp(f, fr, by)))
-                self.field_dot(d, fx, fy)
+                self.field_dot(d, fx, fy, num, self.race.rider(num).cls)
             self.you_ring(d, px, py)
         self.draw_marker(img, d, p, px, py, heading, getattr(self, "_facing", True))
 
