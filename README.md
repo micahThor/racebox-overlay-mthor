@@ -312,8 +312,8 @@ pick your number. Settings save with the video, so after that `--race` or
   checkbox) shows only your class. Drag it like any panel. The lap counter
   on the lap timer switches to race laps too.
 - **One race panel:** in race mode the track map and the standings are a
-  single panel (top right by default): the map on top, the class colour key
-  under it, then the standings. Move, resize and reshape it as one ("Track
+  single panel (top right by default): the map on top, the standings under
+  it, and the class colour key along the bottom. Move, resize and reshape it as one ("Track
   map & standings" in the panel list); the map's turn setting still applies.
   Hide either part to get the other on its own.
 - **Off the picture:** the race panel can go in a strip beside or under the
@@ -321,8 +321,8 @@ pick your number. Settings save with the video, so after that `--race` or
 - **The field on the map:** every other rider still racing is shown on the
   track map as a tag with their race number, and your own marker gets a
   highlight ring so you stand out. When several classes race together, each
-  class has its own colour: the tags are coloured by class, a key under the
-  map says which colour is which, and the standings mark each row with the
+  class has its own colour: the tags are coloured by class, a key along the
+  bottom of the race panel says which colour is which, and the standings mark each row with the
   same colour. Positions between timing-line
   crossings are estimates (see below). Turn the field off with
   `--no-race-field` or the checkbox in the Race tab.

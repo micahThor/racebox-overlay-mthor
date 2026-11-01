@@ -1118,21 +1118,22 @@ class Hud(StyleMixin):
     # ------------------------------------------------------------ map + standings in one
 
     def _racemap_parts(self, p):
-        """The map and standings areas inside the combined race panel."""
+        """The map and standings areas inside the combined race panel: the map on
+        top, the standings under it, and the class key along the bottom."""
         kref = p.k / p.ss
         map_h, key_h = self._racemap
         mh = int(round(map_h * kref))
-        top = int(round((map_h + key_h) * kref))
+        kh = int(round(key_h * kref))
         mp = Panel("map", "map", p.x, p.y, p.w, mh, ay=p.ay, k=p.k, ss=p.ss)
-        tw = Panel("race", "race", p.x, p.y, p.w, p.h - top, ay=p.ay + top, k=p.k, ss=p.ss)
-        return mp, tw, top
+        tw = Panel("race", "race", p.x, p.y, p.w, p.h - mh - kh, ay=p.ay + mh, k=p.k, ss=p.ss)
+        return mp, tw, mh
 
     def _static_racemap(self, img, d, p):
         mp, tw, top = self._racemap_parts(p)
         self._static_map(img, d, mp)
         S = self.S
-        if self._racemap[1]:                     # the class key, between the map and the standings
-            self.class_legend(d, p, S(14), p.iay + mp.ih + S(self._racemap[1] - 8))
+        if self._racemap[1]:                     # the class key, along the bottom under the standings
+            self.class_legend(d, p, S(14), p.iay + p.ih - S(12))
         d.line([(S(14), tw.iay), (p.iw - S(14), tw.iay)],
                fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, S(1)))
 
