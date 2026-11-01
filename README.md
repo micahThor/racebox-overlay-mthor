@@ -387,7 +387,10 @@ output frame grows to make room (the video itself isn't stretched or cropped):
   The side strips sit between them, beside the picture.
 
 The strips are always on; make each one wider or narrower with its slider
-(50-200%) under **Frame round the video** in **Look & layout**. A bigger strip
+(50-200%) under **Frame round the video** in **Look & layout**. **Colour**
+there picks the frame's colour (the theme's trim, texture and outline stay,
+and adapt to a light or dark colour); **Theme colour** goes back to the
+theme's own. From the command line: `--frame-color "#0b2545"`. A bigger strip
 makes the output bigger and its full-size panels with it (a tall panel like
 the race panel is limited by the strip's height). From the command line the
 sizes come from the project file (`"strip_size": {"left": 1, "right": 1.4,

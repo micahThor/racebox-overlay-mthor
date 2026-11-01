@@ -28,7 +28,8 @@ from urllib.parse import parse_qs, urlparse
 
 from . import crewchief, project, sync, telemetry, timing, video
 from .hud import Hud
-from .themes import THEMES
+from .frame import frame_colour
+from .themes import THEMES, load_theme
 from .timing import fmt_time
 
 HERE = Path(__file__).parent
@@ -213,7 +214,8 @@ class Studio:
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True),
-                          self._strips(), self.proj.get("strip_size"), self.info()],
+                          self._strips(), self.proj.get("strip_size"), self.info(),
+                          self.proj.get("frame_color")],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -226,7 +228,8 @@ class Studio:
                         ghost=self.ghost_cfg(), race=self.race(),
                         race_class=bool(self.proj.get("race_class")),
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
-                        strip_size=self.proj.get("strip_size") or {}, info=self.info())
+                        strip_size=self.proj.get("strip_size") or {}, info=self.info(),
+                        frame_color=self.proj.get("frame_color"))
                 self._huds[key] = h
             return h
 
@@ -376,6 +379,7 @@ class Studio:
         return {"pw": h.canvas_w, "ph": h.canvas_h, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
                 "video_rect": [h.vid_x0, h.vid_y0, pw, ph],
                 "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()),
+                "frame_default": "#" + "".join(f"{v:02x}" for v in frame_colour(load_theme(self.proj.get("theme")))),
                 "frame": f"/api/frame.png?k={id(h)}",
                 "panels": [p for p in h.describe() if p["name"] != "none"],
                 "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
@@ -386,7 +390,7 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info", "frame_color"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -469,7 +473,8 @@ class Studio:
                         speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
                         race=self.race(), race_class=bool(self.proj.get("race_class")),
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
-                        strip_size=self.proj.get("strip_size") or {}, info=self.info())
+                        strip_size=self.proj.get("strip_size") or {}, info=self.info(),
+                        frame_color=self.proj.get("frame_color"))
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")

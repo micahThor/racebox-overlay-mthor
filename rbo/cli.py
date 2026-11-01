@@ -290,7 +290,9 @@ def _setup(args):
                   speed_max=args.speed_max, ghost=ghost_cfg, race=race,
                   race_class=bool(args.race_class), race_field=bool(args.race_field),
                   strip_size=(args.project or {}).get("strip_size") or {},
-                  info=project.session_info(tel, getattr(args, "info_saved", None)))
+                  info=project.session_info(tel, getattr(args, "info_saved", None)),
+                  frame_color=args.frame_color if args.frame_color is not None
+                  else (args.project or {}).get("frame_color"))
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -566,6 +568,8 @@ def main(argv=None):
                        help="put panels in the frame round the video, e.g. race=right,laps=bottom "
                             "(panels: laps,map,speed,gforce,ghost,race,event_logo,track_logo,event,track,date; "
                             "places: left,right,top,bottom, or video)")
+        s.add_argument("--frame-color", metavar="HEX", default=None,
+                       help="colour of the frame round the video, e.g. '#1b2a3a' (default: the theme's; '' = theme)")
         s.add_argument("--event-name", metavar="TEXT", help="the event (the organisation running it); '' = off")
         s.add_argument("--track-name", metavar="TEXT", help="the track's name (default: from the RaceBox file); '' = off")
         s.add_argument("--date", metavar="TEXT", help="date and time to show (default: when the session started); '' = off")

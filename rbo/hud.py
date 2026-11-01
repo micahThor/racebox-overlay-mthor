@@ -78,6 +78,22 @@ def strip_size(width: int, height: int, where: str | None) -> tuple[int, int]:
     return 0, 0
 
 
+def parse_colour(v):
+    """'#1a2b3c', '1a2b3c' or [r, g, b] -> (r, g, b); None for anything else."""
+    if isinstance(v, (list, tuple)) and len(v) >= 3:
+        return tuple(max(0, min(255, int(x))) for x in v[:3])
+    if isinstance(v, str):
+        h = v.strip().lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) == 6:
+            try:
+                return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+            except ValueError:
+                return None
+    return None
+
+
 def find_font(override=None) -> str | None:
     """First font that exists. `override` is a path, a list of paths, "file.ttc:Face"
     to pick a face from a collection, or "pixel" for the built-in pixel font."""
@@ -166,7 +182,7 @@ class Hud(StyleMixin):
                  layout: dict | None = None, speed_max: float | None = None,
                  supersample: int = 2, ghost=None, race=None,
                  race_class: bool = False, race_field: bool = True, sidebar: str | None = None,
-                 strips=None, strip_size=None, info=None):
+                 strips=None, strip_size=None, info=None, frame_color=None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
@@ -174,7 +190,7 @@ class Hud(StyleMixin):
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
                          race_class=race_class, race_field=race_field, sidebar=sidebar,
-                         strips=strips, strip_size=strip_size, info=info)
+                         strips=strips, strip_size=strip_size, info=info, frame_color=frame_color)
         # info: the event and track names, the date (text) and the event and track
         # logos (image paths): {"event", "track", "date", "event_logo", "track_logo"}
         self.info = {k: v for k, v in (info or {}).items() if v}
@@ -222,6 +238,9 @@ class Hud(StyleMixin):
             if cfg.get("visible") is False:
                 self.hide.add(name)
         self.theme = load_theme(theme)
+        fc = parse_colour(frame_color)
+        if fc:                                   # your own colour for the frame round the video
+            self.theme["frame_bg"] = fc
         self.C = dict(self.theme)
         self.C["white"] = self.theme["text"]
         self.font_path = find_font(font or self.theme.get("font"))

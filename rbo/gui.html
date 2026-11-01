@@ -358,6 +358,10 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
       <p class="hint">Strips on all four sides of the picture, styled as one frame in the theme, for panels
         that shouldn't cover the picture. Make each strip wider or narrower here. Put a panel in a strip
         below, or drag it there on the video.</p>
+      <div class="info-row" style="grid-template-columns: 96px auto 1fr"><label for="frameColor">Colour</label>
+        <input type="color" id="frameColor" aria-label="Frame colour" style="width:52px;height:30px;padding:0;border:1px solid var(--line);border-radius:6px;background:none">
+        <span><button class="link" id="frameColorReset" title="Use the theme's own frame colour">Theme colour</button>
+          <span class="hint" id="frameColorNote"></span></span></div>
       <div id="stripSizes"></div>
 
       <h2>Panels</h2>
@@ -490,6 +494,8 @@ async function refreshHud() {
     const h = await api(`/api/hud?vt=${vid.currentTime.toFixed(3)}&pw=${pw}`);
     await drawPanels(h);
     stage.style.background = h.side_colour || "";
+    S.frame_default = h.frame_default;
+    if (!P.frame_color && document.activeElement !== $("#frameColor")) $("#frameColor").value = h.frame_default || "#101216";
     const fi = $("#frameImg");
     if (h.frame && fi.dataset.src !== h.frame) { fi.dataset.src = h.frame; fi.src = h.frame; fi.style.display = "block"; }
     $("#readout").innerHTML = `<b>${h.readout.lap}</b><br>${h.readout.speed}`;
@@ -892,6 +898,9 @@ function whereOf(key) {
 }
 function renderLook() {
   renderInfo();
+  $("#frameColor").value = P.frame_color || S.frame_default || "#101216";
+  $("#frameColorNote").textContent = P.frame_color ? "" : "(using the theme's)";
+  $("#frameColorReset").style.display = P.frame_color ? "" : "none";
   const sz = $("#stripSizes"); sz.innerHTML = "";
   for (const st of ["left", "right", "top", "bottom"]) {                 // how big each strip is
     const v = (P.strip_size || {})[st] || 1;
@@ -994,6 +1003,9 @@ function renderLook() {
     list.appendChild(row);
   }
 }
+$("#frameColor").addEventListener("change", e => { save({ frame_color: e.target.value }); renderLook(); });
+$("#frameColorReset").addEventListener("click", () => { save({ frame_color: null }); renderLook(); });
+
 /* ---------- event & track: names, date and logos ---------- */
 function renderInfo() {
   const I = S.info || {};
