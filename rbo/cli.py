@@ -59,7 +59,7 @@ def apply_project(args) -> None:
             if "=" not in item:
                 continue
             k, where = (x.strip() for x in item.split("=", 1))
-            if k not in ("laps", "map", "speed", "gforce", "ghost", "race",
+            if k not in ("laps", "map", "speed", "accel", "gforce", "ghost", "race",
                          "event_logo", "track_logo", "event", "track", "date") or \
                     where not in ("left", "right", "top", "bottom", "video"):
                 sys.exit(f"--place: don't know {item!r}")
@@ -566,7 +566,7 @@ def main(argv=None):
                        help="what the lap timer shows: any of time,sectors,last,best (default all)")
         s.add_argument("--place", metavar="LIST", default=None,
                        help="put panels in the frame round the video, e.g. race=right,laps=bottom "
-                            "(panels: laps,map,speed,gforce,ghost,race,event_logo,track_logo,event,track,date; "
+                            "(panels: laps,map,speed,accel,gforce,ghost,race,event_logo,track_logo,event,track,date; "
                             "places: left,right,top,bottom, or video)")
         s.add_argument("--frame-color", metavar="HEX", default=None,
                        help="colour of the frame round the video, e.g. '#1b2a3a' (default: the theme's; '' = theme)")
@@ -609,7 +609,7 @@ def main(argv=None):
         rc.add_argument("--race-field", action=argparse.BooleanOptionalAction, default=None,
                         help="show the other riders as dots on the map (default on)")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
-        s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,gforce")
+        s.add_argument("--hide", help="comma list of panels to hide: laps,map,speed,accel,gforce (and race,ghost,...)")
         p.add_argument("-o", "--output")
 
     p = sub.add_parser("info", help="list laps and sectors in a session")

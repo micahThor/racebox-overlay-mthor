@@ -20,8 +20,11 @@ The overlay has these panels, each movable, resizable and optional:
   matched to your position on track.
 - **Race mode** (optional): a live standings tower from MYLAPS Speedhive
   timing that reorders as passes happen, with race calls on the radio.
-- **G-force** circle with a trail (or a **lean angle** gauge for bike-mode
-  RaceBox sessions).
+- **G-force** circle with a trail (or a compact **lean angle** gauge for
+  bike-mode RaceBox sessions: the angle, L or R, and one simple indicator).
+- **Throttle & brake** gauge: a bar that fills green upward when you're
+  accelerating and red downward when you're braking, the G figure, and
+  THROTTLE / COAST / BRAKE. See "Throttle & brake" below.
 
 Everything is drawn at twice the output resolution and scaled down, so
 gauges and curves stay smooth even in 4K.
@@ -368,6 +371,25 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
+## Throttle & brake
+
+The RaceBox doesn't know your throttle or brake lever, but it measures how
+hard the bike speeds up and slows down, and that's what this gauge shows:
+
+- green, filling up from the middle: accelerating, labelled THROTTLE;
+- red, filling down: braking (BRAKE, from 0.18 G of slowing);
+- in between, grey: COAST (rolling off, engine braking, holding speed).
+
+The bar's full scale is set from the session (at least 0.6 G each way), with
+a tick every 0.5 G. The figure comes from two sources blended together: GPS
+speed gives the true level but blurs it over about a second; the RaceBox's
+accelerometer gives the quick changes but is noisy and thrown off by the
+bike pitching under braking. The gauge takes the level from GPS and the
+detail from the accelerometer (or GPS alone if the file has no accelerometer
+column). It's its own panel ("Throttle & brake"), so it can be turned off,
+sized and placed like the others; `--hide accel` turns it off from the
+command line.
+
 ## The frame round the video
 
 Every render has a frame round the picture: strips on the left, the right,
@@ -441,7 +463,7 @@ middle of the frame, the track ahead, clear:
 - lap timer and track map across the top, in the sky;
 - the race standings down the left and the ghost down the right, just under
   them;
-- speed and lean side by side at the bottom like a dash, a little larger,
+- speed, throttle & brake and lean side by side at the bottom like a dash, a little larger,
   over the tank and hands rather than the road.
 
 The ghost window keeps the ghost video's own shape (tall for an upright

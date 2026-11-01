@@ -333,6 +333,7 @@ class Studio:
             names.append(("ghost", "Ghost lap"))
         if racing:
             names.append(("race", "Track map & standings"))
+        names.append(("accel", "Throttle & brake"))
         if self.tel.is_bike:
             names.append(("gforce", "Lean angle"))
         elif self.tel.g_lat is not None:

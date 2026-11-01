@@ -29,6 +29,7 @@ from .ghost import GhostState, ghost_state
 from .timing import HudState, Timing, fmt_time
 from .pixelfont import PixelFont
 from .hudstyles import StyleMixin
+from .gauges import ACCEL_SIZE, GaugeMixin
 
 PANEL_NAMES = ("laps", "map", "speed", "gforce")   # "gforce" shows lean for bikes
 
@@ -175,7 +176,7 @@ class Panel:
         return self.ay * self.ss
 
 
-class Hud(StyleMixin):
+class Hud(StyleMixin, GaugeMixin):
     def __init__(self, tel: Telemetry, timing: Timing, width: int, height: int,
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
                  hide: set[str] | None = None, theme: str | dict | None = None,
@@ -256,6 +257,7 @@ class Hud(StyleMixin):
             self.lean_max = (float(np.percentile(tel.lean_deg, 99.7)),
                              float(np.percentile(tel.lean_deg, 0.3)))
 
+        self.setup_accel()
         self._setup_map_rotation()
         self.panels = self._layout()
         if not self.panels:   # everything hidden: keep a 2x2 transparent stub
@@ -396,9 +398,6 @@ class Hud(StyleMixin):
         ("speed", "arc"): (19, 14, 24, 38), ("speed", "bar"): (7, 10, 2, 37),
         ("speed", "tape"): (12, 0, 52, 31), ("speed", "led"): (8, 13, 9, 37),
         ("speed", "dial"): (21, 14, 20, 9),
-        ("lean", "arc"): (11, 10, 11, 25), ("lean", "bar"): (9, 8, 9, 2),
-        ("lean", "tape"): (0, 10, 10, 0), ("lean", "led"): (6, 4, 8, 0),
-        ("lean", "dial"): (8, 5, 7, 2),
         ("laps", "*"): (10, 6, 11, 0),
         ("race", "default"): (0, 7, 0, 0), ("race", "arcade"): (0, 3, 0, 0), ("race", "pitboard"): (0, 3, 0, 0),
     }
@@ -595,7 +594,9 @@ class Hud(StyleMixin):
         if self.has_g:
             specs.append(("gforce", "gforce", 290, 312, "br", self._draw_g))
         elif self.has_lean:
-            specs.append(("gforce", "lean", 380, 262, "br", self._draw_lean))
+            lw_, lh_ = self.lean_size()
+            specs.append(("gforce", "lean", lw_, lh_, "br", self._draw_lean))
+        specs.append(("accel", "accel", ACCEL_SIZE[0], ACCEL_SIZE[1], "bc", self._draw_accel))
         portrait = H > W * 1.15
         self.portrait = portrait
         if self.ghost:
@@ -645,7 +646,7 @@ class Hud(StyleMixin):
         # middle of the frame, the track ahead, clear. Timing and map go in the sky
         # at the top, the standings and ghost down the sides just below them, and
         # speed and lean sit together at the bottom like a dash, a little larger.
-        portrait_scale = {"speed": 1.15, "gforce": 1.15} if portrait else {}
+        portrait_scale = {"speed": 1.15, "gforce": 1.15, "accel": 1.15} if portrait else {}
         side_k = self._side_scales(specs)
         sized = []
         for key, name, rw, rh, corner, fn in specs:
@@ -712,7 +713,7 @@ class Hud(StyleMixin):
                                 vx=L, vy=T, vw=w, vh=h))
         return panels
 
-    SIDE_ORDER = ("event_logo", "event", "track", "date", "laps", "race", "map", "ghost", "speed", "gforce",
+    SIDE_ORDER = ("event_logo", "event", "track", "date", "laps", "race", "map", "ghost", "speed", "accel", "gforce",
                   "track_logo")
     # where a panel goes when the layout doesn't say: the race panel in the right
     # strip, the logos at either end of the bottom strip, the names and date in
@@ -784,12 +785,15 @@ class Hud(StyleMixin):
             return m, m + (size["laps"][1] + gap if "laps" in size else 0)
         if key == "ghost":
             return W - m - w, m + (size["map"][1] + gap if "map" in size else 0)
-        if key in ("speed", "gforce"):                       # side by side, centred, at the bottom
-            sw_ = size.get("speed", (0, 0))[0]
-            gw_ = size.get("gforce", (0, 0))[0]
-            total = sw_ + gw_ + (gap * 2 if sw_ and gw_ else 0)
-            x0 = (W - total) / 2
-            return (x0 if key == "speed" else x0 + total - w), H - m - h
+        if key in ("speed", "accel", "gforce"):              # side by side, centred, at the bottom
+            row = [k for k in ("speed", "accel", "gforce") if k in size and not self.in_side(k)]
+            total = sum(size[k][0] for k in row) + gap * 2 * max(len(row) - 1, 0)
+            x = (W - total) / 2
+            for k in row:
+                if k == key:
+                    break
+                x += size[k][0] + gap * 2
+            return x, H - m - h
         if key in ("event_logo", "event", "track", "date"):
             return m, H * 0.45 + {"event_logo": 0, "event": 1, "track": 2, "date": 3}[key] * (h + gap)
         if key == "track_logo":
@@ -980,31 +984,10 @@ class Hud(StyleMixin):
         self.text(d, self.S(20), p.iay + self.S(36), "G-FORCE", 15, "dim", track=2)
 
     def _static_lean(self, img, d, p):
-        if self.gauge != "arc" and self.static_lean_styled(img, d, p):
-            return
-        self.text(d, self.S(22), p.iay + self.S(36), "LEAN", 15, "dim", track=2)
-        cx, cy, R = p.iw / 2, p.iay + self.S(228), self.S(150)
-        wid = self.S(14)
-        self._lean_geom = (cx, cy, R, wid)
-        box = [cx - R, cy - R, cx + R, cy + R]
-        d.arc(box, 210, 330, fill=self.tint("white", 0.13), width=wid)
-        for a in (-60, -45, -30, -15, 0, 15, 30, 45, 60):
-            ang = math.radians(-90 + a)
-            major = a % 30 == 0
-            r1, r2 = R + wid / 2 + self.S(4), R + wid / 2 + self.S(14 if major else 9)
-            d.line([(cx + r1 * math.cos(ang), cy + r1 * math.sin(ang)),
-                    (cx + r2 * math.cos(ang), cy + r2 * math.sin(ang))],
-                   fill=self.C["dim"] if major else self.tint("dim", 0.6),
-                   width=max(1, self.S(2.5 if major else 1.5)))
-        for m in self.lean_max:              # session max lean, each side
-            a = math.radians(-90 + max(-60, min(60, m)))
-            r = R - wid / 2 - self.S(8)
-            tip = (cx + r * math.cos(a), cy + r * math.sin(a))
-            side = (math.cos(a + math.pi / 2), math.sin(a + math.pi / 2))
-            back = (cx + (r - self.S(12)) * math.cos(a), cy + (r - self.S(12)) * math.sin(a))
-            d.polygon([tip, (back[0] + side[0] * self.S(6), back[1] + side[1] * self.S(6)),
-                       (back[0] - side[0] * self.S(6), back[1] - side[1] * self.S(6))],
-                      fill=self.tint("accent", 0.7))
+        self.static_lean(img, d, p)
+
+    def _static_accel(self, img, d, p):
+        self.static_accel(img, d, p)
 
     # ------------------------------------------------------------ dynamic layer
 
@@ -1355,28 +1338,7 @@ class Hud(StyleMixin):
                   "dim", "r", track=1.5)
 
     def _draw_lean(self, img, d, p, t, st):
-        if self.gauge != "arc" and self.draw_lean_styled(img, d, p, t, st):
-            return
-        cx, cy, R, wid = self._lean_geom
-        lean = float(np.interp(t, self.tel.t, self.tel.lean_deg))
-        a = max(-60, min(60, lean))
-        box = [cx - R, cy - R, cx + R, cy + R]
-        if abs(a) > 0.5:
-            start, end = (270, 270 + a) if a >= 0 else (270 + a, 270)
-            d.arc(box, start, end, fill=self.C["accent"], width=wid)
-            ang = math.radians(270 + a)
-            ex, ey = cx + (R - wid / 2) * math.cos(ang), cy + (R - wid / 2) * math.sin(ang)
-            d.ellipse([ex - wid / 2, ey - wid / 2, ex + wid / 2, ey + wid / 2], fill=self.C["accent"])
-        ang = math.radians(-90 + a)
-        r1, r2 = R - wid - self.S(6), R + self.S(1)
-        d.line([(cx + r1 * math.cos(ang), cy + r1 * math.sin(ang)),
-                (cx + r2 * math.cos(ang), cy + r2 * math.sin(ang))], fill=self.C["white"], width=self.S(4))
-        side = "R" if lean > 0.5 else "L" if lean < -0.5 else ""
-        w = self.text(d, cx, cy - self.S(4), f"{abs(lean):.0f}°", 64, "white", "m")
-        if side:
-            self.text(d, cx + w / 2 + self.S(4), cy - self.S(4), side, 24, "dim")
-        if self.tel.g_long is not None:
-            g = float(np.interp(t, self.tel.t, self.tel.g_long))
-            w = self.text(d, p.iw - self.S(22), p.iay + self.S(36), f"{abs(g):.2f} G", 20, "white", "r")
-            self.text(d, p.iw - self.S(22) - w - self.S(6), p.iay + self.S(36), "ACC" if g >= 0 else "BRK",
-                      13, "dim", "r", track=1.5)
+        self.draw_lean(img, d, p, t, st)
+
+    def _draw_accel(self, img, d, p, t, st):
+        self.draw_accel(img, d, p, t, st)
