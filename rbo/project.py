@@ -32,7 +32,8 @@ still win over anything in the file.
       "race_source": "https://speedhive.mylaps.com/sessions/12935135",
       "race_number": "96",          your start number in that race
       "race_class": false,          tower shows only your class
-      "race_field": true            the other riders as dots on the map
+      "race_field": true,           the other riders as dots on the map
+      "race_side": "right"          race panel beside the video (left/right) instead of on it
     }
 """
 from __future__ import annotations
@@ -45,7 +46,7 @@ DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "crew_chief": False, "voice": None, "voice_rate": 190, "call_settings": {},
             "ghost": False, "race": False, "race_source": None, "race_number": None,
             "race_class": False, "race_field": True, "ghost_source": None,
-            "trim": None}
+            "trim": None, "race_side": None}
 
 
 def path_for(video: str | Path) -> Path:

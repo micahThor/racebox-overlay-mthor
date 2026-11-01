@@ -316,6 +316,14 @@ pick your number. Settings save with the video, so after that `--race` or
   under it, then the standings. Move, resize and reshape it as one ("Track
   map & standings" in the panel list); the map's turn setting still applies.
   Hide either part to get the other on its own.
+- **Beside the video:** in the Race tab, put the map & standings panel
+  **Left of video** or **Right of video** (`--race-side left|right`) and it
+  moves off the picture into its own strip. The output gets wider to make
+  room: an upright video becomes 4:5 (a 1530x2752 GO 3S clip renders at
+  2202x2752), a wide one 21:9 (1920x1080 becomes 2520x1080). The strip is a
+  solid, slightly darker shade of the theme's card colour, and the panel is
+  sized to fill it. The editor preview shows the wider frame, and the other
+  panels are still placed on the video as before.
 - **The field on the map:** every other rider still racing is shown on the
   track map as a tag with their race number, and your own marker gets a
   highlight ring so you stand out. When several classes race together, each

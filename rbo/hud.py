@@ -54,6 +54,14 @@ RACE_W = 290            # standings tower width, reference pixels
 MAP_PAD = 24            # space between the track and the map card's edge
 
 
+def sidebar_width(width: int, height: int) -> int:
+    """Width of the race side panel added beside a video: enough to make an
+    upright video 4:5 and a wide one 21:9 (even, and never tiny)."""
+    target = height * 4 / 5 if height > width * 1.15 else height * 21 / 9
+    side = max(target - width, 0.3 * min(width, height))
+    return int(round(side / 2)) * 2
+
+
 def find_font(override=None) -> str | None:
     """First font that exists. `override` is a path, a list of paths, "file.ttc:Face"
     to pick a face from a collection, or "pixel" for the built-in pixel font."""
@@ -141,14 +149,14 @@ class Hud(StyleMixin):
                  hide: set[str] | None = None, theme: str | dict | None = None,
                  layout: dict | None = None, speed_max: float | None = None,
                  supersample: int = 2, ghost=None, race=None,
-                 race_class: bool = False, race_field: bool = True):
+                 race_class: bool = False, race_field: bool = True, sidebar: str | None = None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
         self.spec = dict(tel=tel, timing=timing, width=width, height=height, units=units,
                          scale=scale, font=font, hide=hide, theme=theme, layout=layout,
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
-                         race_class=race_class, race_field=race_field)
+                         race_class=race_class, race_field=race_field, sidebar=sidebar)
         self.race_field = bool(race_field)
         # race: an rbo.race.Race for the standings tower; race_class: only your class
         self.race = race
@@ -163,6 +171,15 @@ class Hud(StyleMixin):
         self.tel, self.timing = tel, timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
+        # Race side panel: the output is wider than the video and the race panel
+        # (map + standings) sits beside it instead of on the picture. canvas_w is
+        # the output width, vid_x0 where the video starts in it.
+        hidden_race = (layout or {}).get("race", {}).get("visible") is False or "race" in (hide or set())
+        self.sidebar = sidebar if sidebar in ("left", "right") and race is not None and not hidden_race else None
+        self.side_w = sidebar_width(width, height) if self.sidebar else 0
+        self.canvas_w = width + self.side_w
+        self.vid_x0 = self.side_w if self.sidebar == "left" else 0
+        self.side_x0 = 0 if self.sidebar == "left" else width
         self.base_k = min(width, height) / 1080 * scale        # output px per reference px
         self.k = self.base_k * self.ss
         self.units = units
@@ -299,6 +316,14 @@ class Hud(StyleMixin):
         hl = self.tint((255, 255, 255, 255), 0.06 if light else 0.10)
         d.line([(r, p.iay + self.S(1.5)), (p.iw - r, p.iay + self.S(1.5))], fill=hl,
                width=max(1, self.S(1.2)))
+
+    def side_colour(self) -> tuple:
+        """The race side panel's background: the theme's card colour, solid and a
+        shade darker."""
+        bg = self.C["bg"]
+        if bg[3] == 0:                                 # card-less themes
+            return (14, 16, 20)
+        return tuple(int(v * 0.8) for v in bg[:3])
 
     def _card_visible(self, img, d, p: Panel, fringe):
         """The card, drawn only around the visible part of the panel."""
@@ -517,6 +542,11 @@ class Hud(StyleMixin):
             cfg = self.layout.get(key, {})
             k_out = self.base_k * float(cfg.get("scale", 1.0)) * portrait_scale.get(key, 1.0)
             trim = self._trim(name)
+            if self.sidebar and key == "race":
+                m_ = 36 * self.base_k
+                L_, T_, R_, B_ = trim
+                k_out = min((self.side_w - 2 * m_) / max(rw - L_ - R_, 1),
+                            (self.H - 2 * m_) / max(rh - T_ - B_, 1))
             # reshaping: these panels can be made wider/narrower and taller/shorter on
             # their own; their contents re-flow (the round gauges only scale evenly)
             if key in ("map", "race") and name != "racemap":     # (the combined panel did its own)
@@ -533,6 +563,12 @@ class Hud(StyleMixin):
         panels = []
         for key, name, dw, dh, corner, fn, cfg, k_out, vis in sized:
             L, T, w, h = vis
+            if self.sidebar and key == "race":       # beside the video, filling the side panel
+                px = self.side_x0 + (self.side_w - w) / 2
+                py = (H - h) / 2
+                panels.append(Panel(name, key, int(round(px)), int(round(py)), dw, dh, k=k_out * self.ss,
+                                    ss=self.ss, draw=fn, vx=L, vy=T, vw=w, vh=h))
+                continue
             if "x" in cfg and "y" in cfg:
                 px, py = float(cfg["x"]) * W, float(cfg["y"]) * H
             elif portrait:
@@ -541,7 +577,7 @@ class Hud(StyleMixin):
                 px = m if corner[1] == "l" else W - m - w if corner[1] == "r" else (W - w) / 2
                 py = m if corner[0] == "t" else H - m - h if corner[0] == "b" else \
                     (H - h) / 2 if corner[1] == "l" else H * 0.40
-            px = int(round(min(max(px, 0), max(W - w, 0))))
+            px = int(round(min(max(px, 0), max(W - w, 0)))) + self.vid_x0
             py = int(round(min(max(py, 0), max(H - h, 0))))
             panels.append(Panel(name, key, px, py, dw, dh, k=k_out * self.ss, ss=self.ss, draw=fn,
                                 vx=L, vy=T, vw=w, vh=h))
@@ -568,7 +604,9 @@ class Hud(StyleMixin):
     def describe(self) -> list[dict]:
         """Panel rectangles in output pixels, for the GUI."""
         return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.vw, "h": p.vh,
-                 "ay": p.ay + p.vy, "ax": p.vx, "reshape": self.RESHAPE.get(p.key, "")} for p in self.panels]
+                 "ay": p.ay + p.vy, "ax": p.vx,
+                 "reshape": "" if (self.sidebar and p.key == "race") else self.RESHAPE.get(p.key, ""),
+                 "fixed": bool(self.sidebar and p.key == "race")} for p in self.panels]
 
     # ------------------------------------------------------------ static layer
 
@@ -790,7 +828,12 @@ class Hud(StyleMixin):
             arr = np.array(atlas)
             self.paste_ghost(arr, ghost_frame(g.ref_vt, w, h))
             atlas = Image.fromarray(arr, "RGBA")
-        out = frame.convert("RGBA")
+        if self.sidebar:
+            canvas = Image.new("RGBA", (self.canvas_w, self.H), self.side_colour() + (255,))
+            canvas.paste(frame.convert("RGB"), (self.vid_x0, 0))
+            out = canvas
+        else:
+            out = frame.convert("RGBA")
         for p in self.panels:
             out.alpha_composite(atlas.crop((p.vx, p.ay + p.vy, p.vx + p.vw, p.ay + p.vy + p.vh)), (p.x, p.y))
         return out.convert("RGB")

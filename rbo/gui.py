@@ -160,6 +160,19 @@ class Studio:
         self._race_k = key
         return self._race
 
+    def _side(self) -> str | None:
+        """'left'/'right' when the race panel goes beside the video."""
+        side = self.proj.get("race_side")
+        return side if side in ("left", "right") and self.race() is not None else None
+
+    def canvas(self) -> dict:
+        """The output frame at full size: wider than the video with a race side panel."""
+        from .hud import sidebar_width
+        W, H = self.vinfo["width"], self.vinfo["height"]
+        side = self._side()
+        sw = sidebar_width(W, H) if side else 0
+        return {"w": W + sw, "h": H, "vx": sw if side == "left" else 0, "vw": W, "side": side}
+
     def _traffic_s(self) -> float:
         return float((self.proj.get("call_settings") or {}).get("traffic_s", crewchief.DEFAULTS["traffic_s"]))
 
@@ -189,7 +202,8 @@ class Studio:
         key = json.dumps([width, height, self._traffic_s(), self.proj.get("theme"), self.proj.get("units"),
                           self.proj.get("scale"), self.proj.get("speed_max"),
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
-                          bool(self.proj.get("race_class")), self.proj.get("race_field", True)],
+                          bool(self.proj.get("race_class")), self.proj.get("race_field", True),
+                          self._side()],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -201,7 +215,7 @@ class Studio:
                         layout=self.proj.get("layout") or {}, speed_max=self.proj.get("speed_max"),
                         ghost=self.ghost_cfg(), race=self.race(),
                         race_class=bool(self.proj.get("race_class")),
-                        race_field=self.proj.get("race_field", True) is not False)
+                        race_field=self.proj.get("race_field", True) is not False, sidebar=self._side())
                 self._huds[key] = h
             return h
 
@@ -217,7 +231,7 @@ class Studio:
         return {
             "video": {"name": Path(self.video_path).name, "width": v["width"], "height": v["height"],
                       "fps": float(v["fps"]), "duration": v["duration"],
-                      "has_gyro": self.has_gyro()},
+                      "has_gyro": self.has_gyro(), "canvas": self.canvas()},
             "data": {"name": Path(self.proj["session"]).name, "duration": self.tel.duration,
                      "laps": laps, "best": best, "bike": self.tel.is_bike,
                      "panels": self._panel_keys()},
@@ -314,6 +328,8 @@ class Studio:
 
     def hud_frame(self, vt: float, pw: int) -> dict:
         W, H = self.vinfo["width"], self.vinfo["height"]
+        cv = self.canvas()
+        pw = int(pw * W / cv["w"])               # the client sends the whole frame's width
         pw = int(max(320, min(pw, W, 1920)))
         ph = int(round(pw * H / W))
         h = self.hud(pw, ph)
@@ -339,7 +355,9 @@ class Studio:
                  "src": "/ghost-video" if h.ghost is not None and h.ghost.external else "/video"}
         if slot and gp:
             ghost["slot"] = [slot[0], slot[1] - gp.ay, slot[2], slot[3]]   # relative to the panel
-        return {"pw": pw, "ph": ph, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
+        return {"pw": h.canvas_w, "ph": ph, "atlas_w": h.atlas_w, "atlas_h": h.atlas_h,
+                "video_rect": [h.vid_x0, 0, pw, ph],
+                "side_colour": "#" + "".join(f"{v:02x}" for v in h.side_colour()) if h.sidebar else None,
                 "panels": [p for p in h.describe() if p["name"] != "none"],
                 "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
                 "readout": {"lap": lap_s, "speed": speed_s, "data_time": t - self.t0,
@@ -349,14 +367,14 @@ class Studio:
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "race_side"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
         if "offset" in changes:
             self.offset_source = "set by you"
         ghost = self._ghost_ref()          # may fill in the ghost video's sync
-        return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": ghost,
+        return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": ghost, "canvas": self.canvas(),
                 "panels": self._panel_keys(), "race": self.race_info(),
                 "project": {"ghost_source": self.proj.get("ghost_source")}}
 
@@ -431,7 +449,7 @@ class Studio:
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
                         speed_max=self.proj.get("speed_max"), ghost=self.ghost_cfg(),
                         race=self.race(), race_class=bool(self.proj.get("race_class")),
-                        race_field=self.proj.get("race_field", True) is not False)
+                        race_field=self.proj.get("race_field", True) is not False, sidebar=self._side())
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")

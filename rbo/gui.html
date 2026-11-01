@@ -74,6 +74,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 0
 .panel { position: absolute; background-repeat: no-repeat; cursor: grab; touch-action: none; }
 .panel:hover { outline: 1px dashed rgba(242,169,0,.8); outline-offset: 2px; }
 .panel.drag { cursor: grabbing; outline: 2px solid var(--amber); }
+.panel.fixed { cursor: default; }
+.panel.fixed:hover { outline: none; }
 .panel.sizing { background-color: rgba(242,169,0,.12); }
 .hdl { position: absolute; opacity: 0; transition: opacity .12s; z-index: 3; }
 .panel:hover .hdl, .panel.sizing .hdl { opacity: 1; }
@@ -393,6 +395,11 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
           aria-label="Speedhive session link"><button id="rcLoad">Load</button></div>
         <h2>You are</h2>
         <div class="row"><select id="rcRider" aria-label="Your rider" style="flex:1"></select></div>
+        <h2>Map &amp; standings panel</h2>
+        <div class="seg" id="rcSide" role="group" aria-label="Where the race panel goes">
+          <button data-side="">On the video</button><button data-side="left">Left of video</button><button data-side="right">Right of video</button></div>
+        <p class="hint" style="margin-top:6px">Beside the video, the output gets wider so nothing covers the picture:
+          an upright video becomes 4:5, a wide one 21:9.</p>
         <label class="row" style="margin-top:10px;gap:8px"><input type="checkbox" id="rcClass">
           Standings show only my class</label>
         <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="rcField">
@@ -455,6 +462,7 @@ async function refreshHud() {
     const pw = Math.round(stage.clientWidth * Math.min(devicePixelRatio || 1, 2));
     const h = await api(`/api/hud?vt=${vid.currentTime.toFixed(3)}&pw=${pw}`);
     await drawPanels(h);
+    stage.style.background = h.side_colour || "";
     $("#readout").innerHTML = `<b>${h.readout.lap}</b><br>${h.readout.speed}`;
     $("#nodata").style.display = h.readout.in_data ? "none" : "block";
   } catch (e) { console.error(e); }
@@ -471,7 +479,9 @@ function drawPanels(h) {
         let el = overlay.querySelector(`[data-key="${p.key}"]`);
         if (!el) { el = document.createElement("div"); el.className = "panel"; el.dataset.key = p.key;
                    el.title = "Drag to move"; overlay.appendChild(el); attachDrag(el); }
-        addHandles(el, p.reshape || "");
+        el.classList.toggle("fixed", !!p.fixed);
+        if (p.fixed) el.title = "Beside the video (Race tab)";
+        addHandles(el, p.fixed ? "none" : (p.reshape || ""));
         if (p.key === "ghost") placeGhost(el, p, h.ghost);
         if (el.classList.contains("drag")) continue;
         el.style.left = (p.x / h.pw * 100) + "%";
@@ -499,6 +509,7 @@ function addHandles(el, reshape) {
     const h = document.createElement("div"); h.className = "hdl " + cls; h.dataset.kind = kind; h.title = title;
     el.appendChild(h); attachResize(el, h);
   };
+  if (reshape === "none") return;
   mk("hdl-se", "scale", "Drag to resize");
   if (reshape.includes("w")) mk("hdl-e", "w", "Drag to make it wider or narrower");
   if (reshape.includes("h")) mk("hdl-s", "h", "Drag to make it taller or shorter");
@@ -530,7 +541,8 @@ function attachResize(el, h) {
     if (kind === "scale") cfg.scale = r3(Math.min(Math.max((cfg.scale ?? 1) * fw, 0.4), 3));
     else if (kind === "w") cfg.w = r3(Math.min(Math.max((cfg.w ?? 1) * fw, 0.4), 3));
     else cfg.h = r3(Math.min(Math.max((cfg.h ?? 1) * fh, 0.4), 3));
-    cfg.x = +(el.offsetLeft / stage.clientWidth).toFixed(4);   // keep the top-left corner where it is
+    const vr = vidRect();                                       // keep the top-left corner where it is
+    cfg.x = +((el.offsetLeft - vr.x) / vr.w).toFixed(4);
     cfg.y = +(el.offsetTop / stage.clientHeight).toFixed(4);
     P.layout[k] = cfg;
     save({ layout: P.layout }); renderLook();
@@ -539,13 +551,14 @@ function attachResize(el, h) {
 function attachDrag(el) {
   let sx, sy, ox, oy;
   el.addEventListener("pointerdown", e => {
+    if (el.classList.contains("fixed")) return;
     e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag");
     sx = e.clientX; sy = e.clientY; ox = el.offsetLeft; oy = el.offsetTop;
   });
   el.addEventListener("pointermove", e => {
     if (!el.classList.contains("drag")) return;
-    const W = stage.clientWidth, H = stage.clientHeight;
-    const x = Math.min(Math.max(ox + e.clientX - sx, 0), W - el.offsetWidth);
+    const W = stage.clientWidth, H = stage.clientHeight, vr = vidRect();
+    const x = Math.min(Math.max(ox + e.clientX - sx, vr.x), vr.x + vr.w - el.offsetWidth);
     const y = Math.min(Math.max(oy + e.clientY - sy, 0), H - el.offsetHeight);
     el.style.left = (x / W * 100) + "%"; el.style.top = (y / H * 100) + "%";
   });
@@ -553,8 +566,8 @@ function attachDrag(el) {
     if (!el.classList.contains("drag")) return;
     el.classList.remove("drag");
     const k = el.dataset.key;
-    const cfg = Object.assign({}, P.layout[k] || {});
-    cfg.x = +(el.offsetLeft / stage.clientWidth).toFixed(4);
+    const cfg = Object.assign({}, P.layout[k] || {}), vr = vidRect();
+    cfg.x = +((el.offsetLeft - vr.x) / vr.w).toFixed(4);          // a fraction of the video
     cfg.y = +(el.offsetTop / stage.clientHeight).toFixed(4);
     P.layout[k] = cfg;
     save({ layout: P.layout });
@@ -596,7 +609,9 @@ async function save(changes) {
     if (r.ghost_ref !== undefined) S.ghost_ref = r.ghost_ref;
     if (r.project && r.project.ghost_source !== undefined) P.ghost_source = r.project.ghost_source;
     if (r.race) S.race = r.race;
-    const raceCh = ["race", "race_source", "race_number", "race_class", "race_field"].some(k => k in changes);
+    if (r.canvas) { const old = JSON.stringify(S.video.canvas); S.video.canvas = r.canvas;
+                    if (JSON.stringify(r.canvas) !== old) fitStage(); }
+    const raceCh = ["race", "race_source", "race_number", "race_class", "race_field", "race_side"].some(k => k in changes);
     if (r.panels) { S.data.panels = r.panels; if ("ghost" in changes || "ghost_source" in changes || raceCh) renderLook(); }
     if (raceCh || "call_settings" in changes) { renderRace(); renderLapTable(); }
     $("#saved").textContent = "Saved to " + S.project_file.split("/").pop();
@@ -662,9 +677,25 @@ vid.addEventListener("seeked", () => { updatePlayhead(); refreshHud(); });
 vid.addEventListener("timeupdate", updatePlayhead);
 /* the whole video always fits on screen: an upright (portrait) video is sized by
    the window's height instead of being drawn full width and cut off */
+/* the output frame: the video, plus the race side panel when it's beside the video */
+function canvas() { return (S && S.video && S.video.canvas) || { w: S.video.width, h: S.video.height, vx: 0, vw: S.video.width }; }
+function vidRect() {                        // the video's part of the stage, in stage pixels
+  const c = canvas(), k = stage.clientWidth / c.w;
+  return { x: c.vx * k, w: c.vw * k, h: stage.clientHeight };
+}
+function layoutVideo() {
+  const c = canvas();
+  if (c.side) {
+    Object.assign(vid.style, { position: "absolute", top: "0", height: "100%",
+      left: (c.vx / c.w * 100) + "%", width: (c.vw / c.w * 100) + "%" });
+  } else {
+    Object.assign(vid.style, { position: "", top: "", height: "", left: "", width: "" });
+    stage.style.height = ""; stage.style.background = "";
+  }
+}
 function fitStage() {
   if (!S || !S.video) return;
-  const W = S.video.width, H = S.video.height;
+  const W = canvas().w, H = canvas().h;
   const box = stage.parentElement;
   const cs = getComputedStyle(box);
   const aw = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
@@ -672,6 +703,8 @@ function fitStage() {
   const ah = Math.max(260, window.innerHeight - Math.max(top, 60) - 190);   // room for the controls below
   const k = Math.min(aw / W, ah / H);
   stage.style.width = Math.floor(W * k) + "px";
+  layoutVideo();
+  if (canvas().side) stage.style.height = Math.floor(H * k) + "px";
 }
 window.addEventListener("resize", fitStage);
 vid.addEventListener("loadedmetadata", () => { fitStage(); renderTimeline(); refreshHud(); });
@@ -1042,6 +1075,7 @@ function renderRace() {
   sel.disabled = !R.riders.length;
   sel.value = P.race_number || "";
   $("#rcClass").checked = !!P.race_class;
+  document.querySelectorAll("#rcSide button").forEach(b => b.setAttribute("aria-pressed", (P.race_side || "") === b.dataset.side));
   $("#rcField").checked = P.race_field !== false;
   const info = $("#rcInfo");
   if (R.loaded) {
@@ -1073,6 +1107,9 @@ $("#rcLoad").addEventListener("click", () => saveRace({ race_source: $("#rcSrc")
 $("#rcSrc").addEventListener("keydown", e => { if (e.key === "Enter") $("#rcLoad").click(); });
 $("#rcRider").addEventListener("change", e => saveRace({ race_number: e.target.value || null }));
 $("#rcClass").addEventListener("change", e => save({ race_class: e.target.checked }));
+document.querySelectorAll("#rcSide button").forEach(b => b.addEventListener("click", () => {
+  save({ race_side: b.dataset.side || null }); renderRace();
+}));
 $("#rcField").addEventListener("change", e => save({ race_field: e.target.checked }));
 
 /* ---------- trim: which part of the video to render ---------- */

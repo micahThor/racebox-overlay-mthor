@@ -49,7 +49,7 @@ def apply_project(args) -> None:
         print(f"session: {args.session} (from {project.path_for(args.video).name})")
     for k in ("units", "scale", "theme", "track", "sectors", "speed_max",
               "crew_chief", "voice", "voice_rate", "call_settings", "ghost",
-              "race", "race_source", "race_number", "race_class", "race_field"):
+              "race", "race_source", "race_number", "race_class", "race_field", "race_side"):
         if getattr(args, k, None) is None:
             setattr(args, k, proj.get(k) if proj.get(k) is not None else project.DEFAULTS[k])
     args.layout = proj.get("layout") or {}
@@ -268,7 +268,8 @@ def _setup(args):
         hud = Hud(tel, tm, vinfo["width"], vinfo["height"], units=args.units, scale=args.scale,
                   font=args.font, hide=hide, theme=args.theme, layout=args.layout,
                   speed_max=args.speed_max, ghost=ghost_cfg, race=race,
-                  race_class=bool(args.race_class), race_field=bool(args.race_field))
+                  race_class=bool(args.race_class), race_field=bool(args.race_field),
+                  sidebar=args.race_side if args.race_side in ("left", "right") else None)
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -570,6 +571,9 @@ def main(argv=None):
         rc.add_argument("--race-number", metavar="N", default=None, help="your start number in that race")
         rc.add_argument("--race-class", action=argparse.BooleanOptionalAction, default=None,
                         help="tower shows only your class")
+        rc.add_argument("--race-side", choices=["left", "right", "off"], default=None,
+                        help="put the map and standings beside the video, widening the output "
+                             "(upright video to 4:5, wide video to 21:9)")
         rc.add_argument("--race-field", action=argparse.BooleanOptionalAction, default=None,
                         help="show the other riders as dots on the map (default on)")
         s.add_argument("--font", help="path to a .ttf/.ttc/.otf to use")
