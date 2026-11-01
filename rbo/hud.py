@@ -51,6 +51,7 @@ GAUGE_SWEEP = 270.0
 RACE_ROWS = 12          # most rows in the race tower
 RACE_RH = 27            # row height, reference pixels
 RACE_W = 290            # standings tower width, reference pixels
+MAP_PAD = 24            # space between the track and the map card's edge
 
 
 def find_font(override=None) -> str | None:
@@ -109,6 +110,17 @@ class Panel:
     k: float = 1.0  # drawing scale (internal pixels per reference pixel)
     ss: int = 1
     draw: Callable | None = None
+    # The panel is drawn in a w x h area, but only the part with something in it
+    # is shown (and gets the card): vw x vh at (vx, vy) inside that area. x, y are
+    # where that visible part goes on screen.
+    vx: int = 0
+    vy: int = 0
+    vw: int = 0
+    vh: int = 0
+
+    def __post_init__(self):
+        if not self.vw:
+            self.vw, self.vh = self.w, self.h
 
     @property
     def iw(self) -> int:
@@ -182,12 +194,15 @@ class Hud(StyleMixin):
         if not self.panels:   # everything hidden: keep a 2x2 transparent stub
             self.panels = [Panel("none", "none", 0, 0, 2, 2, k=self.k, ss=self.ss,
                                  draw=lambda *a: None)]
+        # a little empty space between panels in the atlas, so a marker or tag drawn
+        # right at one panel's edge can never land in the next panel
+        gap = max(2, int(round(24 * self.base_k))) // 2 * 2
         self.atlas_w = max(p.w for p in self.panels)
-        self.atlas_h = sum(p.h for p in self.panels)
+        self.atlas_h = sum(p.h for p in self.panels) + gap * (len(self.panels) - 1)
         y = 0
         for p in self.panels:
             p.ay = y
-            y += p.h
+            y += p.h + gap
         self._sprites: dict = {}
         self.static = self._draw_static()
 
@@ -285,6 +300,37 @@ class Hud(StyleMixin):
         d.line([(r, p.iay + self.S(1.5)), (p.iw - r, p.iay + self.S(1.5))], fill=hl,
                width=max(1, self.S(1.2)))
 
+    def _card_visible(self, img, d, p: Panel, fringe):
+        """The card, drawn only around the visible part of the panel."""
+        if not p.vx and not p.vy and p.vw == p.w and p.vh == p.h:
+            self.card(img, d, p)
+            return
+        tmp = Image.new("RGBA", (p.vw * self.ss, p.vh * self.ss), tuple(fringe[:3]) + (0,))
+        q = Panel(p.name, p.key, 0, 0, p.vw, p.vh, ay=0, k=p.k, ss=p.ss)
+        self.card(tmp, ImageDraw.Draw(tmp), q)
+        img.alpha_composite(tmp, (p.vx * self.ss, (p.ay + p.vy) * self.ss))
+
+    # Empty margins to leave off each panel (reference px: left, top, right,
+    # bottom), measured from what each style actually draws, so the card fits
+    # its contents snugly.
+    TRIM = {
+        ("speed", "arc"): (19, 14, 24, 38), ("speed", "bar"): (7, 10, 2, 37),
+        ("speed", "tape"): (12, 0, 52, 31), ("speed", "led"): (8, 13, 9, 37),
+        ("speed", "dial"): (21, 14, 20, 9),
+        ("lean", "arc"): (11, 10, 11, 25), ("lean", "bar"): (9, 8, 9, 2),
+        ("lean", "tape"): (0, 10, 10, 0), ("lean", "led"): (6, 4, 8, 0),
+        ("lean", "dial"): (8, 5, 7, 2),
+        ("laps", "*"): (10, 6, 11, 0),
+        ("race", "default"): (0, 7, 0, 0), ("race", "arcade"): (0, 3, 0, 0), ("race", "pitboard"): (0, 3, 0, 0),
+    }
+
+    def _trim(self, name: str) -> tuple:
+        if name in ("speed", "lean"):
+            return self.TRIM.get((name, self.gauge), (0, 0, 0, 0))
+        if name == "race":
+            return self.TRIM.get((name, self.theme.get("tower", "default")), (0, 0, 0, 0))
+        return self.TRIM.get((name, "*"), (0, 0, 0, 0))
+
     def glow(self, color, radius: float):
         """A soft round glow sprite (cached)."""
         key = (tuple(color), round(radius * self.k))
@@ -328,6 +374,16 @@ class Hud(StyleMixin):
         x, y = self.timing.x, self.timing.y
         self._map_c = (float((x.min() + x.max()) / 2), float((y.min() + y.max()) / 2))
         self._map_ang = -quarter * math.pi / 2                  # clockwise on screen
+
+    def _map_track(self):
+        """World x/y of the track the map shows: the fastest lap (so the grid-out
+        or pit-out path isn't drawn), or the whole ride if there are no laps."""
+        laps = self.timing.laps
+        if not laps:
+            return self.timing.x, self.timing.y
+        best = min(laps, key=lambda l: l.time)
+        m = (self.tel.t >= best.t_start) & (self.tel.t <= best.t_end)
+        return self.timing.x[m], self.timing.y[m]
 
     def map_rot(self, xx, yy):
         """World x/y (metres) turned the way the map is shown."""
@@ -391,11 +447,15 @@ class Hud(StyleMixin):
             lw, lh = self._laps_geometry()
             specs.append(("laps", "laps", lw, lh, "tl",
                           self._draw_laps))
-        x, y = self.map_rot(self.timing.x, self.timing.y)
+        # the map's card fits the track itself (a timed lap, not the ride out of the
+        # pits or off the grid), turned the way it's shown
+        x, y = self.map_rot(*self._map_track())
         aspect = (np.ptp(y) + 1) / (np.ptp(x) + 1)
-        mw, mh = 400, int(min(max(400 * aspect, 190), 400))
-        if aspect > 1.2:
-            mw, mh = int(min(max(400 / aspect, 190), 400)), 400
+        pad = 2 * MAP_PAD
+        if aspect <= 1:
+            mw, mh = 400, int(max((400 - pad) * aspect + pad, 110))
+        else:
+            mw, mh = int(max((400 - pad) / aspect + pad, 110)), 400
         specs.append(("map", "map", mw, mh, "tr", self._draw_map))
         specs.append(("speed", "speed", 330, 312, "bl", self._draw_speed))
         if self.has_g:
@@ -437,6 +497,7 @@ class Hud(StyleMixin):
                 continue
             cfg = self.layout.get(key, {})
             k_out = self.base_k * float(cfg.get("scale", 1.0)) * portrait_scale.get(key, 1.0)
+            trim = self._trim(name)
             # reshaping: these panels can be made wider/narrower and taller/shorter on
             # their own; their contents re-flow (the round gauges only scale evenly)
             if key in ("map", "race"):
@@ -444,12 +505,15 @@ class Hud(StyleMixin):
             elif key == "laps":
                 rw = max(rw * self._shape_factor(cfg, "w"), self._lap_geom["min_w"])
             w, h = max(2, int(round(rw * k_out))), max(2, int(round(rh * k_out)))
-            sized.append((key, name, w, h, corner, fn, cfg, k_out))
+            L, T, R, B = (int(round(v * k_out)) for v in trim)
+            vw, vh = max(2, w - L - R), max(2, h - T - B)
+            sized.append((key, name, w, h, corner, fn, cfg, k_out, (L, T, vw, vh)))
         m = int(round(36 * self.base_k))
         gap = int(round(16 * self.base_k))
-        size = {key: (w, h) for key, _, w, h, *_ in sized}
+        size = {key: (vis[2], vis[3]) for key, _, _w, _h, _c, _f, _cfg, _k, vis in sized}
         panels = []
-        for key, name, w, h, corner, fn, cfg, k_out in sized:
+        for key, name, dw, dh, corner, fn, cfg, k_out, vis in sized:
+            L, T, w, h = vis
             if "x" in cfg and "y" in cfg:
                 px, py = float(cfg["x"]) * W, float(cfg["y"]) * H
             elif portrait:
@@ -460,7 +524,8 @@ class Hud(StyleMixin):
                     (H - h) / 2 if corner[1] == "l" else H * 0.40
             px = int(round(min(max(px, 0), max(W - w, 0))))
             py = int(round(min(max(py, 0), max(H - h, 0))))
-            panels.append(Panel(name, key, px, py, w, h, k=k_out * self.ss, ss=self.ss, draw=fn))
+            panels.append(Panel(name, key, px, py, dw, dh, k=k_out * self.ss, ss=self.ss, draw=fn,
+                                vx=L, vy=T, vw=w, vh=h))
         return panels
 
     def _portrait_pos(self, key, w, h, size, m, gap):
@@ -483,8 +548,8 @@ class Hud(StyleMixin):
 
     def describe(self) -> list[dict]:
         """Panel rectangles in output pixels, for the GUI."""
-        return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "ay": p.ay,
-                 "reshape": self.RESHAPE.get(p.key, "")} for p in self.panels]
+        return [{"key": p.key, "name": p.name, "x": p.x, "y": p.y, "w": p.vw, "h": p.vh,
+                 "ay": p.ay + p.vy, "ax": p.vx, "reshape": self.RESHAPE.get(p.key, "")} for p in self.panels]
 
     # ------------------------------------------------------------ static layer
 
@@ -500,7 +565,7 @@ class Hud(StyleMixin):
                 continue
             self._use(p)
             if p.name != "ghost":          # the ghost's card only shows while it's active
-                self.card(img, d, p)
+                self._card_visible(img, d, p, fringe)
                 self.apply_texture(img, p)
             getattr(self, f"_static_{p.name}", lambda *a: None)(img, d, p)
         return img
@@ -513,9 +578,9 @@ class Hud(StyleMixin):
                    fill=self.tint("text" if self.light() else "white", 0.14), width=max(1, self.S(1)))
 
     def _static_map(self, img, d, p):
-        pad = self.S(26)
+        pad = self.S(MAP_PAD)
         x, y = self.timing.x, self.timing.y
-        xr, yr = self.map_rot(x, y)
+        xr, yr = self.map_rot(*self._map_track())
         s = min((p.iw - 2 * pad) / max(np.ptp(xr), 1), (p.ih - 2 * pad) / max(np.ptp(yr), 1))
         cx, cy = (xr.min() + xr.max()) / 2, (yr.min() + yr.max()) / 2
         oy = p.iay
@@ -525,10 +590,11 @@ class Hud(StyleMixin):
             return p.iw / 2 + (rx - cx) * s, oy + p.ih / 2 - (ry - cy) * s
         self._map_xform = xform
 
-        step = max(1, len(x) // 4000)
-        pts = list(zip(*self._map_xform(x[::step], y[::step])))
-        d.line(pts, fill=self.tint("text" if self.light() else "white", 0.16), width=max(1, self.S(3)),
-               joint="curve")
+        if not self.timing.laps:      # no laps: the whole ride, faintly
+            step = max(1, len(x) // 4000)
+            pts = list(zip(*self._map_xform(x[::step], y[::step])))
+            d.line(pts, fill=self.tint("text" if self.light() else "white", 0.5), width=max(1, self.S(3)),
+                   joint="curve")
 
         laps = self.timing.laps
         if laps:
@@ -709,7 +775,7 @@ class Hud(StyleMixin):
             atlas = Image.fromarray(arr, "RGBA")
         out = frame.convert("RGBA")
         for p in self.panels:
-            out.alpha_composite(atlas.crop((0, p.ay, p.w, p.ay + p.h)), (p.x, p.y))
+            out.alpha_composite(atlas.crop((p.vx, p.ay + p.vy, p.vx + p.vw, p.ay + p.vy + p.vh)), (p.x, p.y))
         return out.convert("RGB")
 
     def _draw_laps(self, img, d, p: Panel, t: float, st: HudState):
@@ -940,6 +1006,7 @@ class Hud(StyleMixin):
         else:
             self._heading = heading
         if self.race is not None and self.race_field and getattr(self, "_lap_path", None) is not None:
+            self._map_panel = p
             fr, bx, by = self._lap_path
             for num, f in self.race.field(t, self.race_cls):
                 fx, fy = self._map_xform(float(np.interp(f, fr, bx)), float(np.interp(f, fr, by)))

@@ -272,6 +272,9 @@ class StyleMixin:
         f = self.font(size)
         w = max(self.measure(num, size) + S(9), S(18))
         h = S(17)
+        if p_ := getattr(self, "_map_panel", None):        # keep the tag inside the map's card
+            x = min(max(x, w / 2 + S(4)), p_.iw - w / 2 - S(4))
+            y = min(max(y, p_.iay + h / 2 + S(4)), p_.iay + p_.ih - h / 2 - S(4))
         x0, y0, x1, y1 = x - w / 2, y - h / 2, x + w / 2, y + h / 2
         base = y + f.size * 0.36
         if multi:
@@ -315,7 +318,7 @@ class StyleMixin:
         S = self.S
         bw = S(14) + max(self.measure(c.upper(), 11) for c in classes) + S(14)
         bh = len(classes) * S(16) + S(4)
-        x, y = self.timing.x, self.timing.y
+        x, y = self._map_track()
         step = max(1, len(x) // 1500)
         px, py = self._map_xform(x[::step], y[::step])
         px, py = np.asarray(px), np.asarray(py)

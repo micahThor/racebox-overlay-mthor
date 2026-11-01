@@ -480,7 +480,8 @@ function drawPanels(h) {
         el.style.height = (p.h / h.ph * 100) + "%";
         el.style.backgroundImage = `url(${img.src})`;
         el.style.backgroundSize = `${h.atlas_w / p.w * 100}% ${h.atlas_h / p.h * 100}%`;
-        el.style.backgroundPosition = `0% ${h.atlas_h > p.h ? p.ay / (h.atlas_h - p.h) * 100 : 0}%`;
+        el.style.backgroundPosition = `${h.atlas_w > p.w ? (p.ax || 0) / (h.atlas_w - p.w) * 100 : 0}% ` +
+          `${h.atlas_h > p.h ? p.ay / (h.atlas_h - p.h) * 100 : 0}%`;
       }
       overlay.querySelectorAll(".panel").forEach(el => { if (!keep.has(el.dataset.key)) el.remove(); });
       res();

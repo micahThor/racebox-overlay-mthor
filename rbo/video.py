@@ -148,7 +148,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     parts = [f"[1:v]split={len(hud.panels)}" + "".join(f"[a{i}]" for i in range(len(hud.panels)))]
     prev = "0:v"
     for i, p in enumerate(hud.panels):
-        parts.append(f"[a{i}]crop={p.w}:{p.h}:0:{p.ay}[p{i}]")
+        parts.append(f"[a{i}]crop={p.vw}:{p.vh}:{p.vx}:{p.ay + p.vy}[p{i}]")
         nxt = f"v{i}"
         parts.append(f"[{prev}][p{i}]overlay={p.x}:{p.y}:format=auto[{nxt}]")
         prev = nxt
