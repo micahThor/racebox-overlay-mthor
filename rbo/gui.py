@@ -174,8 +174,8 @@ class Studio:
         from .hud import bottom_height, sidebar_width
         W, H = self.vinfo["width"], self.vinfo["height"]
         ss = self.proj.get("strip_size") or {}
-        mult = lambda k: min(max(float(ss.get(k, 1.0) or 1.0), 0.4), 2.5)
-        even = lambda v: int(round(v / 2)) * 2
+        mult = lambda k: min(max(float(ss.get(k, 1.0) or 1.0), 0.1), 2.5)
+        even = lambda v: max(2, int(round(v / 2)) * 2)
         sw = sidebar_width(W, H)
         lw, rw = even(sw * mult("left")), even(sw * mult("right"))
         th, bh = even(bottom_height(W, H) * mult("top")), even(bottom_height(W, H) * mult("bottom"))

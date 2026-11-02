@@ -225,8 +225,8 @@ class Hud(StyleMixin, GaugeMixin):
         ok = {"left": ("top", "center", "bottom"), "right": ("top", "center", "bottom"),
               "top": ("left", "center", "right"), "bottom": ("left", "center", "right")}
         self.strip_align = {st: a for st, a in (strip_align or {}).items() if a in ok.get(st, ())}
-        mult = lambda st: min(max(float((strip_size or {}).get(st, 1.0) or 1.0), 0.4), 2.5)
-        even = lambda v: int(round(v / 2)) * 2
+        mult = lambda st: min(max(float((strip_size or {}).get(st, 1.0) or 1.0), 0.1), 2.5)
+        even = lambda v: max(2, int(round(v / 2)) * 2)
         sw = sidebar_width(width, height)
         self.left_w = even(sw * mult("left"))
         self.right_w = even(sw * mult("right"))
@@ -687,7 +687,8 @@ class Hud(StyleMixin, GaugeMixin):
             items = sorted([it for it in sized if it[0] in side_k and self.in_side(it[0]) == st],
                            key=lambda it: self._side_order(it[0]))
             al = self.strip_align.get(st, "center")
-            place = lambda room, size: m if al == "top" else room - m - size if al == "bottom" else (room - size) / 2
+            md = self._strip_margin(st, m)       # a thin strip gets a thinner margin
+            place = lambda room, size: md if al == "top" else room - md - size if al == "bottom" else (room - size) / 2
             if st in ("top", "bottom"):         # a row: at the strip's left or right end, or centred on the video
                 row = sum(it[8][2] for it in items) + gap * max(len(items) - 1, 0)
                 if al == "left":
@@ -758,6 +759,11 @@ class Hud(StyleMixin, GaugeMixin):
             return float(cfg["side_order"])
         return self.SIDE_ORDER.index(key) / 10 if key in self.SIDE_ORDER else 0.99
 
+    def _strip_margin(self, st: str, m: float) -> float:
+        """The margin across a strip: the usual one, or less in a thin strip."""
+        _, _, sw, sh = self.strip_rect(st)
+        return min(m, (sh if st in ("top", "bottom") else sw) * 0.12)
+
     def _side_scales(self, specs) -> dict:
         """Drawing scale for each panel in a strip. In a side strip each panel fills
         its width (a column); in the bottom strip each fills its height (a row);
@@ -766,6 +772,7 @@ class Hud(StyleMixin, GaugeMixin):
         m, gap = 36 * self.base_k, 16 * self.base_k
         for st in self.strips:
             _, _, sw, sh = self.strip_rect(st)
+            md = self._strip_margin(st, m)
             items = []
             for key, name, rw, rh, corner, fn in specs:
                 if key in self.hide or self.in_side(key) != st:
@@ -774,12 +781,12 @@ class Hud(StyleMixin, GaugeMixin):
                 # the size slider: a share of the strip (100% fills it)
                 share = min(max(float((self.layout.get(key, {}) or {}).get("scale", 1.0) or 1.0), 0.2), 1.0)
                 if st in ("top", "bottom"):
-                    k = (sh - 2 * m) / max(rh - T - B, 1) * share
-                    if name == "text":           # names and the date: no bigger than a strip's width would make them
-                        k = min(k, (self.left_w - 2 * m) / max(rw, 1) * share)
+                    k = (sh - 2 * md) / max(rh - T - B, 1) * share
+                    if name == "text":           # names and the date: kept to a sensible size in a tall strip
+                        k = min(k, self.base_k * share)
                     items.append((key, k, (rw - L - R) * k))
                 else:
-                    k = (sw - 2 * m) / max(rw - L - R, 1) * share
+                    k = (sw - 2 * md) / max(rw - L - R, 1) * share
                     items.append((key, k, (rh - T - B) * k))
             if not items:
                 continue
