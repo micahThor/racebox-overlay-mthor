@@ -371,6 +371,27 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
+## Saved layouts
+
+Once a video looks the way you like, keep that look for other videos: at the
+top of **Look & layout**, type a name under **Saved layouts** ("Race day",
+"Practice") and click **Save current**. Saving under an existing name
+updates it. To use one on another video, pick it and click **Use**.
+
+A saved layout keeps the theme, units, overall size and speedometer top
+speed; where every panel goes, how big it is, which are shown, what the lap
+timer shows and how the map is turned; the frame round the video (strip
+sizes, alignment and colour); and the event name and logos. It doesn't keep
+anything that belongs to one video: sync, trim, ghost, race, the track name
+or the date.
+
+Tick **Start new videos with "…"** and every video you open for the first
+time starts from that layout (videos you've already set up keep their own
+settings). Layouts are saved in `~/.racebox-overlay/layouts/`.
+
+From the command line: `--preset "Race day"` renders with a saved layout on
+top of the video's own settings.
+
 ## Throttle & brake
 
 The RaceBox doesn't know your throttle or brake lever, but it measures how

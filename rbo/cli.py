@@ -41,6 +41,12 @@ def apply_project(args) -> None:
     """Fill options the user didn't give from <video>.overlay.json (saved by the GUI)."""
     proj = project.load(args.video) if getattr(args, "video", None) and not args.no_project \
         else dict(project.DEFAULTS, layout={})
+    if getattr(args, "preset", None):        # a saved layout on top of this video's settings
+        try:
+            proj = dict(proj, **project.apply_preset(proj, project.load_preset(args.preset)))
+        except ValueError as e:
+            sys.exit(str(e))
+        print(f"layout: {args.preset}")
     args.project = proj
     if not args.session:
         args.session = proj.get("session")
@@ -569,6 +575,8 @@ def main(argv=None):
                        help="put panels in the frame round the video, e.g. race=right,laps=bottom "
                             "(panels: laps,map,speed,accel,gforce,ghost,race,event_logo,track_logo,event,track,date; "
                             "places: left,right,top,bottom, or video)")
+        s.add_argument("--preset", metavar="NAME", default=None,
+                       help="use a layout saved in the editor (Look & layout > Saved layouts)")
         s.add_argument("--frame-color", metavar="HEX", default=None,
                        help="colour of the frame round the video, e.g. '#1b2a3a' (default: the theme's; '' = theme)")
         s.add_argument("--event-name", metavar="TEXT", help="the event (the organisation running it); '' = off")

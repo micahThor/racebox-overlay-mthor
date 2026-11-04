@@ -520,6 +520,27 @@ VIDEO_EXT = {".mp4", ".mov", ".m4v", ".insv"}
 SESSION_EXT = {".csv", ".vbo"}
 
 
+def presets_api(b: dict, studio) -> dict:
+    """Saved layouts: list them, save the open video's, get, delete, or pick the
+    one new videos start from."""
+    act = b.get("action", "list")
+    try:
+        if act == "save":
+            if studio is None:
+                raise ValueError("open a video first")
+            project.save_preset(str(b.get("name", "")), studio.proj)
+            print(f"saved layout {str(b.get('name', '')).strip()!r}", flush=True)
+        elif act == "get":
+            return {"settings": project.load_preset(str(b.get("name", "")))}
+        elif act == "delete":
+            project.delete_preset(str(b.get("name", "")))
+        elif act == "default":
+            project.set_default_preset(b.get("name") or None)
+    except (OSError, ValueError) as e:
+        return {"error": str(e)}
+    return {"presets": project.list_presets(), "default": project.default_preset()}
+
+
 def recent() -> list[dict]:
     """Videos opened before that still exist, newest first, with their saved session."""
     try:
@@ -684,6 +705,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             b = self._body()
             s = self.studio
+            if u.path == "/api/presets":         # saved layouts (they don't need a video open)
+                self._json(presets_api(b, s))
+                return
             if u.path == "/api/pick":
                 self._json(pick_file(b.get("kind", "video"), b.get("dir")))
                 return

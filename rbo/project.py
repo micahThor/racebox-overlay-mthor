@@ -72,6 +72,13 @@ def load(video: str | Path) -> dict:
             data.update(json.loads(p.read_text()))
         except (OSError, json.JSONDecodeError):
             pass
+    else:                       # a video seen for the first time: start from your default layout
+        name = default_preset()
+        if name:
+            try:
+                data.update(apply_preset(data, load_preset(name)))
+            except (OSError, ValueError, KeyError):
+                pass
     # older settings: one race-only side panel, or a single "side"
     old = data.get("race_side") if data.get("race_side") in ("left", "right") else None
     if old and not data.get("strips"):
@@ -106,3 +113,92 @@ def session_info(tel, saved: dict | None) -> dict:
     defaults = {"track": str(tel.meta.get("Track", "")).strip(),
                 "date": f"{when:%b} {when.day}, {when.year} · {when.hour % 12 or 12}:{when:%M %p}"}
     return {k: (defaults.get(k, "") if saved.get(k) is None else saved[k]) for k in INFO_KEYS}
+
+
+# ---------------------------------------------------------------- saved layouts
+#
+# A saved layout is the look of an overlay, kept to use on other videos: the
+# theme, units and sizes, where every panel goes and how big it is (and what
+# the lap timer shows), the frame round the video (strip sizes, alignment and
+# colour), and the event name and logos. Not saved: anything about one video
+# (sync, trim, ghost, race, track name, date). Stored as JSON files in
+# ~/.racebox-overlay/layouts/.
+
+PRESET_KEYS = ("theme", "units", "scale", "speed_max", "layout", "strip_size", "strip_align", "frame_color")
+PRESET_INFO = ("event", "event_logo", "track_logo")
+PRESET_DIR = Path.home() / ".racebox-overlay" / "layouts"
+_DEFAULT_FILE = "_default.json"
+
+
+def _preset_path(name: str) -> Path:
+    slug = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name.strip()).strip()
+    if not slug or slug.startswith("_"):
+        raise ValueError("give the layout a name")
+    return PRESET_DIR / f"{slug[:80]}.json"
+
+
+def list_presets() -> list[dict]:
+    """Saved layouts, newest first: [{"name", "theme", "saved"}]."""
+    out = []
+    if PRESET_DIR.is_dir():
+        for f in PRESET_DIR.glob("*.json"):
+            if f.name == _DEFAULT_FILE:
+                continue
+            try:
+                d = json.loads(f.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            out.append({"name": d.get("name") or f.stem, "theme": (d.get("settings") or {}).get("theme"),
+                        "saved": f.stat().st_mtime})
+    return sorted(out, key=lambda x: -x["saved"])
+
+
+def save_preset(name: str, proj: dict) -> dict:
+    """Save the look & layout of a project under a name (replacing one of that name)."""
+    settings = {k: proj.get(k) for k in PRESET_KEYS if proj.get(k) is not None}
+    info = proj.get("info") or {}
+    settings["info"] = {k: info[k] for k in PRESET_INFO if info.get(k) is not None}
+    p = _preset_path(name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"name": name.strip(), "settings": settings}, indent=2) + "\n")
+    return {"name": name.strip(), "settings": settings}
+
+
+def load_preset(name: str) -> dict:
+    p = _preset_path(name)
+    if not p.exists():
+        names = ", ".join(x["name"] for x in list_presets()) or "none saved yet"
+        raise ValueError(f"no saved layout called {name!r} (saved: {names})")
+    return json.loads(p.read_text()).get("settings") or {}
+
+
+def delete_preset(name: str) -> None:
+    p = _preset_path(name)
+    if p.exists():
+        p.unlink()
+    if default_preset() == name.strip():
+        set_default_preset(None)
+
+
+def apply_preset(proj: dict, settings: dict) -> dict:
+    """The project changes that put a saved layout on a project."""
+    ch = {k: settings[k] for k in PRESET_KEYS if k in settings}
+    if settings.get("info"):
+        info = dict(proj.get("info") or {})
+        info.update(settings["info"])
+        ch["info"] = info
+    return ch
+
+
+def default_preset() -> str | None:
+    """The saved layout new videos start from, if one is chosen."""
+    try:
+        name = json.loads((PRESET_DIR / _DEFAULT_FILE).read_text()).get("name")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+    return name if name and _preset_path(name).exists() else None
+
+
+def set_default_preset(name: str | None) -> None:
+    PRESET_DIR.mkdir(parents=True, exist_ok=True)
+    (PRESET_DIR / _DEFAULT_FILE).write_text(json.dumps({"name": name}) + "\n")

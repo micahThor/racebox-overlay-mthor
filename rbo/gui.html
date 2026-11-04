@@ -307,6 +307,17 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
     </div>
 
     <div class="pane" id="pane-look">
+      <h2 style="margin-top:0">Saved layouts</h2>
+      <p class="hint">Keep this look and layout (theme, sizes, where every panel goes, the frame, event name
+        and logos) to use on other videos.</p>
+      <div class="row"><select id="psList" aria-label="Saved layouts" style="flex:1"></select>
+        <button id="psApply">Use</button><button class="link" id="psDelete">Delete</button></div>
+      <div class="row" style="margin-top:6px"><input type="text" id="psName" placeholder="Name, e.g. Race day"
+        aria-label="Layout name" style="flex:1;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
+        <button id="psSave">Save current</button></div>
+      <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="psDefault">
+        <span>Start new videos with <b id="psDefName">this layout</b></span></label>
+      <div class="status" id="psNote"></div>
       <button class="switch" id="ghSwitch" role="switch" aria-checked="false">
         <span><b>Ghost lap</b><small id="ghState">Off</small></span>
         <span class="knob" aria-hidden="true"></span>
@@ -1018,6 +1029,53 @@ function renderLook() {
 $("#frameColor").addEventListener("change", e => { save({ frame_color: e.target.value }); renderLook(); });
 $("#frameColorReset").addEventListener("click", () => { save({ frame_color: null }); renderLook(); });
 
+/* ---------- saved layouts ---------- */
+let PS = { presets: [], default: null };
+async function loadPresets(res) {
+  PS = res || await api("/api/presets", { action: "list" });
+  const sel = $("#psList"), cur = sel.value;
+  sel.innerHTML = PS.presets.length ? PS.presets.map(p =>
+      `<option value="${p.name.replace(/"/g, "&quot;")}">${p.name.replace(/</g, "&lt;")}${p.name === PS.default ? " (new videos)" : ""}</option>`).join("")
+    : "<option value=''>None saved yet</option>";
+  if (PS.presets.some(p => p.name === cur)) sel.value = cur;
+  const has = !!PS.presets.length;
+  $("#psApply").disabled = $("#psDelete").disabled = $("#psDefault").disabled = !has;
+  renderPresetDefault();
+}
+function renderPresetDefault() {
+  const n = $("#psList").value;
+  $("#psDefName").textContent = n ? `“${n}”` : "this layout";
+  $("#psDefault").checked = !!n && n === PS.default;
+}
+$("#psList").addEventListener("change", renderPresetDefault);
+$("#psSave").addEventListener("click", async () => {
+  const name = $("#psName").value.trim() || $("#psList").value;
+  if (!name) { $("#psNote").textContent = "Give the layout a name first."; return; }
+  const r = await api("/api/presets", { action: "save", name });
+  await loadPresets(r); $("#psList").value = name; renderPresetDefault();
+  $("#psName").value = ""; $("#psNote").textContent = `Saved “${name}”.`;
+});
+$("#psApply").addEventListener("click", async () => {
+  const name = $("#psList").value; if (!name) return;
+  const { settings } = await api("/api/presets", { action: "get", name });
+  const ch = {};
+  for (const k of ["theme", "units", "scale", "speed_max", "layout", "strip_size", "strip_align", "frame_color"])
+    if (k in settings) ch[k] = settings[k];
+  if (settings.info) ch.info = Object.assign({}, P.info || {}, settings.info);
+  await save(ch); renderLook(); fitStage();
+  $("#psNote").textContent = `Using “${name}”.`;
+});
+$("#psDelete").addEventListener("click", async () => {
+  const name = $("#psList").value; if (!name) return;
+  await loadPresets(await api("/api/presets", { action: "delete", name }));
+  $("#psNote").textContent = `Deleted “${name}”.`;
+});
+$("#psDefault").addEventListener("change", async e => {
+  const name = $("#psList").value;
+  await loadPresets(await api("/api/presets", { action: "default", name: e.target.checked ? name : null }));
+  $("#psList").value = name; renderPresetDefault();
+});
+
 /* ---------- event & track: names, date and logos ---------- */
 function renderInfo() {
   const I = S.info || {};
@@ -1405,7 +1463,7 @@ async function pickInto(kind, input, other) {
   if (S.data.laps.length > 1) $("#lapSel").value = 2;
   renderLapTable();
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
-  renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls();
+  renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls(); loadPresets();
   if (P.ghost_source && P.ghost_source.session) loadGhostLaps(true);
   if (P.trim) {
     if (P.trim.start != null) $("#rStart").value = fmt(P.trim.start);
