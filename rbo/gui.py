@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import crewchief, project, sync, telemetry, timing, video
 from .hud import Hud
+from . import results as resultsmod
 from .frame import frame_colour
 from .themes import THEMES, load_theme
 from .timing import fmt_time
@@ -161,6 +162,30 @@ class Studio:
         self._race_k = key
         return self._race
 
+    def _results_key(self) -> list:
+        p = self.proj
+        return [p.get("qual_source") or "", p.get("heat_source") or "", str(p.get("race_number") or "")]
+
+    def results(self):
+        """An earlier session's results to show at the start (see results.py), or None."""
+        key = json.dumps(self._results_key())
+        if getattr(self, "_res_k", None) == key:
+            return self._res
+        self._res, self.results_error = None, None
+        try:
+            self._res = resultsmod.from_project(self.proj, self.video_path)
+        except (resultsmod.ResultsError, OSError, ValueError, KeyError) as e:
+            self.results_error = str(e)
+        self._res_k = key
+        return self._res
+
+    def results_info(self) -> dict:
+        r = self.results()
+        if r is None:
+            return {"error": getattr(self, "results_error", None)}
+        return {"kind": r.kind, "title": r.title.title(), "riders": len(r.rows),
+                "me": next((x["pos"] for x in r.rows if r.me and x["number"] == r.me), None)}
+
     def _strips(self) -> list:
         """The strips round the video (always all three; only their sizes change)."""
         return ["left", "right", "top", "bottom"]
@@ -215,7 +240,7 @@ class Studio:
                           self.proj.get("layout"), self._ghost_key(), self._race_key(),
                           bool(self.proj.get("race_class")), self.proj.get("race_field", True),
                           self._strips(), self.proj.get("strip_size"), self.info(),
-                          self.proj.get("frame_color"), self.proj.get("strip_align")],
+                          self.proj.get("frame_color"), self.proj.get("strip_align"), self._results_key()],
                          sort_keys=True)
         with self.lock:
             h = self._huds.get(key)
@@ -230,7 +255,7 @@ class Studio:
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
                         strip_size=self.proj.get("strip_size") or {}, info=self.info(),
                         frame_color=self.proj.get("frame_color"),
-                        strip_align=self.proj.get("strip_align") or {})
+                        strip_align=self.proj.get("strip_align") or {}, results=self.results())
                 self._huds[key] = h
             return h
 
@@ -261,6 +286,7 @@ class Studio:
             "race_kinds": __import__("rbo.race", fromlist=["RACE_KINDS"]).RACE_KINDS,
             "race": self.race_info(),
             "info": self.info(),
+            "results": self.results_info(),
             "call_defaults": crewchief.DEFAULTS,
             "speech": {"available": crewchief.tts_backend() is not None,
                        "engine": crewchief.tts_backend(),
@@ -387,12 +413,24 @@ class Studio:
                 "atlas": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
                 "readout": {"lap": lap_s, "speed": speed_s, "data_time": t - self.t0,
                             "in_data": inside},
-                "ghost": ghost}
+                "ghost": ghost, "results": self._results_view(h, vt)}
+
+    def _results_view(self, h, vt: float):
+        """Where the results card goes on the preview, and whether it's showing
+        (the first seconds after the render's start)."""
+        r = h.results
+        if r is None or not r.rows:
+            return None
+        start = float(((self.proj.get("trim") or {}).get("start")) or 0.0)
+        x, y, w, hh, _ = h.results_rect(len(r.rows))
+        return {"src": f"/api/results.png?k={id(h)}", "rect": [x, y, w, hh],
+                "show": 0 <= vt - start < resultsmod.RESULTS_SECONDS}
 
     def update_project(self, changes: dict) -> dict:
         allowed = {"offset", "theme", "units", "scale", "layout", "speed_max",
                    "crew_chief", "voice", "voice_rate", "call_settings", "ghost", "ghost_source", "trim",
-                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info", "frame_color", "strip_align"}
+                   "race", "race_source", "race_number", "race_class", "race_field", "strips", "strip_size", "info", "frame_color", "strip_align",
+                   "qual_source", "heat_source"}
         for k, v in changes.items():
             if k in allowed:
                 self.proj[k] = v
@@ -401,6 +439,7 @@ class Studio:
         ghost = self._ghost_ref()          # may fill in the ghost video's sync
         return {"saved": self.save(), "offset": self.proj["offset"], "ghost_ref": ghost, "canvas": self.canvas(),
                 "panels": self._panel_keys(), "race": self.race_info(), "info": self.info(),
+                "results": self.results_info(),
                 "project": {"ghost_source": self.proj.get("ghost_source")}}
 
     def sync_lap(self, n: int, vt: float) -> dict:
@@ -477,7 +516,7 @@ class Studio:
                         race_field=self.proj.get("race_field", True) is not False, strips=self._strips(),
                         strip_size=self.proj.get("strip_size") or {}, info=self.info(),
                         frame_color=self.proj.get("frame_color"),
-                        strip_align=self.proj.get("strip_align") or {})
+                        strip_align=self.proj.get("strip_align") or {}, results=self.results())
 
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")
@@ -668,6 +707,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "no video open yet"}, HTTPStatus.CONFLICT)
             elif u.path == "/api/hud":
                 self._json(self.studio.hud_frame(float(q["vt"][0]), int(float(q.get("pw", ["960"])[0]))))
+            elif u.path == "/api/results.png":     # the results card, for the preview
+                h = getattr(self.studio, "_frame_hud", None)
+                if h is None or h.results is None:
+                    self.send_error(404)
+                    return
+                buf = io.BytesIO()
+                h.results_card(h.results).save(buf, "PNG", compress_level=1)
+                body = buf.getvalue()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Cache-Control", "max-age=3600")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif u.path == "/api/frame.png":       # the themed frame round the video, for the preview
                 h = getattr(self.studio, "_frame_hud", None)
                 if h is None:

@@ -38,6 +38,9 @@ still win over anything in the file.
                                     with "where": "left"/"right"/"top"/"bottom" ("video" = on it)
       "strip_align": {"left": "top", "bottom": "right"},   side strips: top/center/bottom;
                                     top and bottom strips: left/center/right (default center)
+      "qual_source": "https://speedhive.mylaps.com/sessions/…"   qualifying results: this
+                                    video is the heat, so they show for its first 10 s
+      "heat_source": "…"             heat race results: this video is the main (shown instead)
       "frame_color": "#1b2a3a",      the frame's colour (null = the theme's own)
       "info": {"event": "SFL MiniGP Round 6", "track": "...", "date": "...",
                "event_logo": "/path/logo.png", "track_logo": "/path/track.png"}
@@ -55,7 +58,8 @@ DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
             "ghost": False, "race": False, "race_source": None, "race_number": None,
             "race_class": False, "race_field": True, "ghost_source": None,
             "trim": None, "race_side": None, "side": None, "strips": [],
-            "strip_size": {}, "info": None, "frame_color": None, "strip_align": {}}
+            "strip_size": {}, "info": None, "frame_color": None, "strip_align": {},
+            "qual_source": None, "heat_source": None}
 
 
 def path_for(video: str | Path) -> Path:

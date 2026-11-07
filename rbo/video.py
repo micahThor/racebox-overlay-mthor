@@ -160,11 +160,31 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:{hud.vid_y0}:color=0x{c}[pad]")
     parts.append(f"[pad][{fi}:v]overlay=0:0:shortest=1:format=auto[base]")
     prev = "base"
+    # an earlier session's results, big over the picture for the first seconds:
+    # the panels on the picture wait until it fades (the strips' stay put)
+    res = getattr(hud, "results", None)
+    res_in = []
+    hold = ""
+    if res is not None and res.rows:
+        from .results import FADE_IN, FADE_OUT, RESULTS_SECONDS
+        res_png = os.path.join(frame_dir, "results.png")
+        hud.results_card(res).save(res_png)
+        rx, ry, _, _, _ = hud.results_rect(len(res.rows))
+        res_in = ["-loop", "1", "-framerate", f"{fps.numerator}/{fps.denominator}",
+                  "-t", f"{RESULTS_SECONDS:.2f}", "-i", res_png]
+        hold = f":enable='gte(t,{RESULTS_SECONDS - FADE_OUT / 2:.2f})'"
     for i, p in enumerate(hud.panels):
         parts.append(f"[a{i}]crop={p.vw}:{p.vh}:{p.vx}:{p.ay + p.vy}[p{i}]")
         nxt = f"v{i}"
-        parts.append(f"[{prev}][p{i}]overlay={p.x}:{p.y}:format=auto[{nxt}]")
+        en = hold if hold and not hud.in_side(p.key) else ""
+        parts.append(f"[{prev}][p{i}]overlay={p.x}:{p.y}:format=auto{en}[{nxt}]")
         prev = nxt
+    if res_in:
+        ri = fi + 1
+        parts.append(f"[{ri}:v]format=rgba,fade=t=in:st=0:d={FADE_IN}:alpha=1,"
+                     f"fade=t=out:st={RESULTS_SECONDS - FADE_OUT:.2f}:d={FADE_OUT}:alpha=1[res]")
+        parts.append(f"[{prev}][res]overlay={rx}:{ry}:format=auto:eof_action=pass[vres]")
+        prev = "vres"
     parts.append(f"[{prev}]format=yuv420p[vout]")
 
     cmd = [need("ffmpeg"), "-v", "error", "-nostats", "-y",
@@ -173,6 +193,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
            "-r", f"{fps.numerator}/{fps.denominator}", "-i", "pipe:0",
            *(["-i", radio] if radio else []),
            "-loop", "1", "-framerate", f"{fps.numerator}/{fps.denominator}", "-i", frame_png,
+           *res_in,
            "-filter_complex", ";".join(parts + _radio_mix(info["has_audio"]) if radio else parts),
            "-map", "[vout]"]
     if radio:

@@ -371,6 +371,29 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
+### Qualifying and heat results at the start
+
+A race day runs qualifying, then heat races, then the main. In the Race tab,
+under **Earlier sessions**, paste the Speedhive link of the session before
+this video's:
+
+- **Qualifying** results: this video is the heat race. The qualifying
+  results show at the start.
+- **Heat race** results: this video is the main. The heat results show at
+  the start (if both are given, the heat's win).
+
+The results show big over the picture, in the current theme, for the first
+10 seconds of the rendered video (from the render's start, so a trimmed
+render shows them at its own start), fading in and out. Each row has the
+position, race number, rider, class (with its colour) and time: the best lap
+for qualifying; the finishing time, or laps down, for a heat. Your row is
+highlighted (from your rider number in race mode). The panels on the picture
+step aside while the results show; panels in the frame's strips stay. Leave
+both empty to skip it. This works whether or not race mode is on for this
+video. Results are downloaded once and kept next to the video.
+
+From the command line: `--qual-source LINK` or `--heat-source LINK`.
+
 ## Saved layouts
 
 Once a video looks the way you like, keep that look for other videos: at the

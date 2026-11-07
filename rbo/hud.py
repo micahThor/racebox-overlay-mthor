@@ -30,6 +30,7 @@ from .timing import HudState, Timing, fmt_time
 from .pixelfont import PixelFont
 from .hudstyles import StyleMixin
 from .gauges import ACCEL_SIZE, GaugeMixin
+from .results import ResultsMixin
 
 PANEL_NAMES = ("laps", "map", "speed", "gforce")   # "gforce" shows lean for bikes
 
@@ -176,7 +177,7 @@ class Panel:
         return self.ay * self.ss
 
 
-class Hud(StyleMixin, GaugeMixin):
+class Hud(StyleMixin, GaugeMixin, ResultsMixin):
     def __init__(self, tel: Telemetry, timing: Timing, width: int, height: int,
                  units: str = "mph", scale: float = 1.0, font: str | None = None,
                  hide: set[str] | None = None, theme: str | dict | None = None,
@@ -184,7 +185,7 @@ class Hud(StyleMixin, GaugeMixin):
                  supersample: int = 2, ghost=None, race=None,
                  race_class: bool = False, race_field: bool = True, sidebar: str | None = None,
                  strips=None, strip_size=None, info=None, frame_color=None,
-                 strip_align=None):
+                 strip_align=None, results=None):
         """layout: {panel: {"x": 0..1, "y": 0..1, "scale": float, "visible": bool}},
         x/y being the panel's top-left corner as a fraction of the frame.
         speed_max: top of the speedometer in display units (70 mph / 120 km/h)."""
@@ -193,7 +194,9 @@ class Hud(StyleMixin, GaugeMixin):
                          speed_max=speed_max, supersample=supersample, ghost=ghost, race=race,
                          race_class=race_class, race_field=race_field, sidebar=sidebar,
                          strips=strips, strip_size=strip_size, info=info, frame_color=frame_color,
-                         strip_align=strip_align)
+                         strip_align=strip_align, results=results)
+        # results of an earlier session (qualifying or heat), shown big at the start
+        self.results = results
         # info: the event and track names, the date (text) and the event and track
         # logos (image paths): {"event", "track", "date", "event_logo", "track_logo"}
         self.info = {k: v for k, v in (info or {}).items() if v}

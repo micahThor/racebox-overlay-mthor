@@ -235,6 +235,24 @@ def load_race(args, tel, tm, quiet: bool = False):
     return r
 
 
+def load_results(args):
+    """An earlier session's results to show at the start of the video, or None."""
+    from . import results as resultsmod
+    proj = dict(getattr(args, "project", None) or {})
+    for k in ("qual_source", "heat_source"):
+        if getattr(args, k, None) is not None:
+            proj[k] = getattr(args, k) or None
+    proj["race_number"] = getattr(args, "race_number", None) or proj.get("race_number")
+    try:
+        res = resultsmod.from_project(proj, getattr(args, "video", None))
+    except resultsmod.ResultsError as e:
+        sys.exit(f"results: {e}")
+    if res is not None:
+        print(f"{res.title.lower()} results ({len(res.rows)} riders) show for the first "
+              f"{resultsmod.RESULTS_SECONDS:.0f} s")
+    return res
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_info(args):
@@ -299,7 +317,8 @@ def _setup(args):
                   strip_align=(args.project or {}).get("strip_align") or {},
                   info=project.session_info(tel, getattr(args, "info_saved", None)),
                   frame_color=args.frame_color if args.frame_color is not None
-                  else (args.project or {}).get("frame_color"))
+                  else (args.project or {}).get("frame_color"),
+                  results=load_results(args))
     except ValueError as e:
         sys.exit(str(e))
     print(f"sync: {how}")
@@ -575,6 +594,10 @@ def main(argv=None):
                        help="put panels in the frame round the video, e.g. race=right,laps=bottom "
                             "(panels: laps,map,speed,accel,gforce,ghost,race,event_logo,track_logo,event,track,date; "
                             "places: left,right,top,bottom, or video)")
+        s.add_argument("--qual-source", metavar="LINK", default=None,
+                       help="qualifying results (Speedhive link): this video is the heat; shown for the first 10 s")
+        s.add_argument("--heat-source", metavar="LINK", default=None,
+                       help="heat race results (Speedhive link): this video is the main; shown for the first 10 s")
         s.add_argument("--preset", metavar="NAME", default=None,
                        help="use a layout saved in the editor (Look & layout > Saved layouts)")
         s.add_argument("--frame-color", metavar="HEX", default=None,

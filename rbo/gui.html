@@ -71,6 +71,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 0
   align-self: center; max-width: 100%; }
 .stage video { display: block; width: 100%; height: auto; }
 .overlay { position: absolute; inset: 0; }
+.resimg { position: absolute; pointer-events: none; opacity: 0; transition: opacity .4s; }
+.overlay.results-on .panel:not([data-strip=left]):not([data-strip=right]):not([data-strip=top]):not([data-strip=bottom]) { opacity: 0; }
 .frameimg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; display: none; }
 .info-row { display: grid; grid-template-columns: 96px 1fr auto; gap: 8px; align-items: center; margin: 6px 0; }
 .info-row input[type=text] { background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
@@ -253,6 +255,7 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
       <video id="vid" preload="auto" playsinline muted></video>
       <img class="frameimg" id="frameImg" alt="">
       <div class="overlay" id="overlay"></div>
+      <img class="resimg" id="resImg" alt="">
       <div class="nodata" id="nodata">No RaceBox data at this point in the video</div>
     </div>
     <div class="transport">
@@ -452,6 +455,16 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <p class="hint" style="margin-top:8px">Race calls play when the crew chief radio is on; they replace
           the plain lap-time call. <span id="rcJump"></span></p>
       </div>
+
+      <h2>Earlier sessions</h2>
+      <p class="hint">Results from earlier in the race day, shown big over the picture for the first 10 seconds
+        of the video. Qualifying results mean this video is the heat race; heat race results mean it's the main
+        (if you give both, the heat's show). Leave them empty to skip.</p>
+      <div class="info-row"><label for="rsQual">Qualifying</label>
+        <input type="text" id="rsQual" placeholder="Speedhive session link"><button class="link" id="rsQualClear">Clear</button></div>
+      <div class="info-row"><label for="rsHeat">Heat race</label>
+        <input type="text" id="rsHeat" placeholder="Speedhive session link"><button class="link" id="rsHeatClear">Clear</button></div>
+      <div class="result" id="rsInfo"></div>
     </div>
 
     <div class="render">
@@ -509,6 +522,7 @@ async function refreshHud() {
     if (!P.frame_color && document.activeElement !== $("#frameColor")) $("#frameColor").value = h.frame_default || "#101216";
     const fi = $("#frameImg");
     if (h.frame && fi.dataset.src !== h.frame) { fi.dataset.src = h.frame; fi.src = h.frame; fi.style.display = "block"; }
+    showResults(h);
     $("#readout").innerHTML = `<b>${h.readout.lap}</b><br>${h.readout.speed}`;
     $("#nodata").style.display = h.readout.in_data ? "none" : "block";
   } catch (e) { console.error(e); }
@@ -666,6 +680,7 @@ async function save(changes) {
     if (r.project && r.project.ghost_source !== undefined) P.ghost_source = r.project.ghost_source;
     if (r.race) S.race = r.race;
     if (r.info) S.info = r.info;
+    if (r.results) S.results = r.results;
     if (r.canvas) { const old = JSON.stringify(S.video.canvas); S.video.canvas = r.canvas;
                     if (JSON.stringify(r.canvas) !== old) { fitStage(); renderLook(); } }
     const raceCh = ["race", "race_source", "race_number", "race_class", "race_field", "strips"].some(k => k in changes);
@@ -1028,6 +1043,35 @@ function renderLook() {
 }
 $("#frameColor").addEventListener("change", e => { save({ frame_color: e.target.value }); renderLook(); });
 $("#frameColorReset").addEventListener("click", () => { save({ frame_color: null }); renderLook(); });
+
+/* ---------- earlier sessions' results ---------- */
+function showResults(h) {
+  const im = $("#resImg"), r = h.results;
+  if (!r) { im.style.opacity = 0; overlay.classList.remove("results-on"); return; }
+  if (im.dataset.src !== r.src) { im.dataset.src = r.src; im.src = r.src; }
+  const [x, y, w, hh] = r.rect;
+  Object.assign(im.style, { left: x / h.pw * 100 + "%", top: y / h.ph * 100 + "%",
+                            width: w / h.pw * 100 + "%", height: hh / h.ph * 100 + "%", opacity: r.show ? 1 : 0 });
+  overlay.classList.toggle("results-on", r.show);
+}
+function renderResults() {
+  const R = S.results || {};
+  if (document.activeElement !== $("#rsQual")) $("#rsQual").value = P.qual_source || "";
+  if (document.activeElement !== $("#rsHeat")) $("#rsHeat").value = P.heat_source || "";
+  const el = $("#rsInfo");
+  if (R.error) el.innerHTML = `<span class="warn">${R.error}</span>`;
+  else if (R.kind) el.textContent = `${R.title} results (${R.riders} riders${R.me ? ", you P" + R.me : ""}) show for the first 10 s: ` +
+    (R.kind === "heat" ? "this video is the main race." : "this video is the heat race.");
+  else el.textContent = "";
+}
+async function saveResults(ch) {
+  $("#rsInfo").textContent = "Loading…";
+  await save(ch); renderResults();
+}
+$("#rsQual").addEventListener("change", e => saveResults({ qual_source: e.target.value.trim() || null }));
+$("#rsHeat").addEventListener("change", e => saveResults({ heat_source: e.target.value.trim() || null }));
+$("#rsQualClear").addEventListener("click", () => saveResults({ qual_source: null }));
+$("#rsHeatClear").addEventListener("click", () => saveResults({ heat_source: null }));
 
 /* ---------- saved layouts ---------- */
 let PS = { presets: [], default: null };
@@ -1463,7 +1507,7 @@ async function pickInto(kind, input, other) {
   if (S.data.laps.length > 1) $("#lapSel").value = 2;
   renderLapTable();
   if (!S.data.laps.length) { $("#setLap").disabled = true; }
-  renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls(); loadPresets();
+  renderSync(); renderLook(); renderTimeline(); renderCC(); renderRace(); loadCalls(); loadPresets(); renderResults();
   if (P.ghost_source && P.ghost_source.session) loadGhostLaps(true);
   if (P.trim) {
     if (P.trim.start != null) $("#rStart").value = fmt(P.trim.start);
