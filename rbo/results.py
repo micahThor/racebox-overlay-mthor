@@ -24,7 +24,12 @@ RESULTS_SECONDS = 10.0
 FADE_IN, FADE_OUT = 0.5, 0.7
 
 TITLES = {"qualifying": "QUALIFYING", "heat": "HEAT RACE"}
-TIME_HEAD = {"qualifying": "BEST LAP", "heat": "TIME"}
+# the columns after the class, right-aligned: (key, heading, right edge in reference px)
+COLUMNS = {
+    "qualifying": [("laps", "LAPS", 770), ("time", "BEST LAP", 920), ("gap", "GAP", 1060)],
+    "heat": [("laps", "LAPS", 650), ("best", "BEST LAP", 790), ("time", "TIME", 935), ("gap", "GAP", 1060)],
+}
+CLASS_X = {"qualifying": 540, "heat": 470}
 
 
 class ResultsError(Exception):
@@ -93,25 +98,64 @@ def load_classification(source: str, cache: Path | None = None) -> dict:
     return cls
 
 
+def _gap(v: float) -> str:
+    m, sec = divmod(v, 60)
+    return f"+{int(m)}:{sec:06.3f}" if m else f"+{sec:.3f}"
+
+
+STATUS_WORDS = ("DNF", "DNS", "DSQ", "DQ", "NC")
+
+
+def _status(r: dict) -> str:
+    """DNF / DNS / DSQ when Speedhive marks a rider so (field names vary)."""
+    for k in ("status", "resultStatus", "state"):
+        v = str(r.get(k) or "").strip().upper()
+        if v and v not in ("OK", "FINISHED", "CLASSIFIED", "NORMAL", "NONE"):
+            for w in STATUS_WORDS:
+                if w in v:
+                    return w
+            return v[:4]
+    return ""
+
+
 def build(kind: str, classification: dict, me: str = "") -> Results:
+    """Every rider in the session, in finishing order (riders without a
+    position at the end), with all their results: laps, best lap, total time
+    and the gap to the leader (to pole, for qualifying)."""
     rows_in = sorted(classification.get("rows") or [],
                      key=lambda r: (r.get("position") is None, r.get("position") or 0))
     if not rows_in:
         raise ResultsError("that Speedhive session has no results")
     lead_laps = max((r.get("numberOfLaps") or 0) for r in rows_in)
+    lead = rows_in[0]
+    pole = min((v for v in (_secs(r.get("bestTime")) for r in rows_in) if v), default=None)
+    lead_total = _secs(lead.get("totalTime"))
     rows = []
     for r in rows_in:
+        laps = r.get("numberOfLaps")
+        best, total = _secs(r.get("bestTime")), _secs(r.get("totalTime"))
+        st = _status(r)
         if kind == "qualifying":
-            t = _fmt(_secs(r.get("bestTime")))
+            t = _fmt(best) if best else (st or "—")
+            gap = "" if not best or not pole else ("POLE" if abs(best - pole) < 1e-6 else _gap(best - pole))
         else:                                   # a race: finish time, or laps down
-            down = lead_laps - (r.get("numberOfLaps") or 0)
-            if down > 0 and r.get("numberOfLaps"):
-                t = f"+{down} LAP" + ("S" if down > 1 else "")
+            down = lead_laps - (laps or 0)
+            t = st or (_fmt(total) if total else "—")
+            if st:
+                gap = ""
+            elif down > 0 and laps:
+                gap = f"+{down} LAP" + ("S" if down > 1 else "")
+            elif r is lead:
+                gap = "WINNER" if lead_total else ""
             else:
-                t = _fmt(_secs(r.get("totalTime")))
+                gap = _gap(total - lead_total) if total and lead_total else ""
         rows.append({"pos": r.get("position"), "number": str(r.get("startNumber", "")).strip(),
                      "name": " ".join(str(r.get("name", "")).split()),
-                     "cls": str(r.get("resultClass") or "").strip(), "time": t})
+                     "cls": str(r.get("resultClass") or "").strip(),
+                     "cpos": r.get("positionInClass"),
+                     "laps": "" if laps is None else str(laps),
+                     "best": _fmt(best) if best else "—",
+                     "time": t, "gap": gap})
     return Results(kind, rows, str(me or "").strip())
 
 
@@ -129,19 +173,20 @@ def from_project(proj: dict, video_path: str | None = None) -> Results | None:
 class ResultsMixin:
     """Mixed into Hud: draws the results card in the theme."""
 
-    RW = 820            # reference width of the card
+    RW = 1090           # reference width of the card
 
     def results_rect(self, n_rows: int) -> tuple:
         """(x, y, w, h, k) of the card in the output frame: most of the picture,
         centred on it."""
-        RH = self._res_rh()
+        RH = self._res_rh(n_rows)
         ref_h = 128 + n_rows * RH + 26
         k = min(self.W * 0.9 / self.RW, self.H * 0.88 / ref_h)
         w, h = int(round(self.RW * k)), int(round(ref_h * k))
         return self.vid_x0 + (self.W - w) // 2, self.vid_y0 + (self.H - h) // 2, w, h, k
 
-    def _res_rh(self) -> int:
-        return 44
+    def _res_rh(self, n: int) -> int:
+        """Row height: tighter for a big field, so everyone fits."""
+        return 44 if n <= 16 else 38 if n <= 24 else 32
 
     def results_card(self, res: Results) -> Image.Image:
         """The card at output size, see-through, in the theme."""
@@ -170,7 +215,7 @@ class ResultsMixin:
 
     def _results_body(self, img, d, p, res: Results):
         S = self.S
-        RW, RH = self.RW, self._res_rh()
+        RW, RH = self.RW, self._res_rh(len(res.rows))
         pad = 30
         light = self.light()
         # header: the session, and the event below it
@@ -182,17 +227,20 @@ class ResultsMixin:
         if sub:
             self.text(d, S(pad), S(90), sub, 17, "dim")
         d.line([(S(pad), S(100)), (S(RW - pad), S(100))], fill=self.C["accent"], width=max(1, S(2.5)))
-        # columns
+        # columns: position, number, rider, class, then the times
         has_cls = any(r["cls"] for r in res.rows)
-        c_pos, c_num, c_name, c_cls, c_time = pad + 40, pad + 128, pad + 148, 548, RW - pad
+        cols = COLUMNS.get(res.kind, COLUMNS["heat"])
+        c_pos, c_num, c_name = pad + 40, pad + 128, pad + 148
+        c_cls = CLASS_X.get(res.kind, 470)
+        first_col = min(x - self.measure_ref(res, k) for k, _, x in cols)
         hy = 122
-        for x_, s_, a_ in ((c_pos, "POS", "r"), (c_num, "NO.", "r"), (c_name, "RIDER", "l"),
-                           (c_time, TIME_HEAD.get(res.kind, "TIME"), "r")):
+        for x_, s_, a_ in ((c_pos, "POS", "r"), (c_num, "NO.", "r"), (c_name, "RIDER", "l")):
             self.text(d, S(x_), S(hy), s_, 13, "dim", a_, track=1.5)
+        for k_, s_, x_ in cols:
+            self.text(d, S(x_), S(hy), s_, 13, "dim", "r", track=1.5)
         if has_cls:
             self.text(d, S(c_cls), S(hy), "CLASS", 13, "dim", track=1.5)
         top = 132
-        time_w = max(self.measure(r["time"], 24) for r in res.rows)
         stroke = self.theme.get("stroke")
         for i, r in enumerate(res.rows):
             ry = top + i * RH
@@ -211,8 +259,8 @@ class ResultsMixin:
             self.text(d, S(c_pos), base, str(r["pos"] or "—"), 22, dim, "r")
             self.text(d, S(c_num), base, r["number"], 26, ink, "r")
             name, size = r["name"].upper(), 22
-            room = S((c_cls - 16 if has_cls else c_time - 150) - c_name)
-            while size > 13 and self.measure(name, size) > room:
+            room = S((c_cls - 16 if has_cls else first_col - 20) - c_name)
+            while size > 12 and self.measure(name, size) > room:
                 size -= 1
             self.text(d, S(c_name), base, name, size, ink)
             if has_cls and r["cls"]:
@@ -221,11 +269,28 @@ class ResultsMixin:
                 cy = base - S(7)
                 d.ellipse([S(c_cls), cy - dr, S(c_cls) + 2 * dr, cy + dr], fill=cc,
                           outline=ink if me else None, width=max(1, S(1.5)))
-                cname, csz = r["cls"].upper(), 17
-                croom = S(c_time - c_cls - 20 - 14) - time_w
-                while csz > 11 and self.measure(cname, csz) > croom:
+                cname = r["cls"].upper() + (f" P{r['cpos']}" if r.get("cpos") and self._multi(res) else "")
+                csz = 17
+                croom = S(first_col - c_cls - 20 - 16)
+                while csz > 10 and self.measure(cname, csz) > croom:
                     csz -= 1
                 self.text(d, S(c_cls + 20), base, cname, csz, dim)
-            self.text(d, S(c_time), base, r["time"], 24, ink, "r")
+            for k_, _, x_ in cols:
+                v = r.get(k_, "")
+                if not v:
+                    continue
+                main = k_ == "time"
+                sz = 22 if main else 19
+                if v in ("POLE", "WINNER") or v.endswith(("LAP", "LAPS")):
+                    sz = 15
+                self.text(d, S(x_), base, v, sz, ink if main or me else dim, "r")
             if stroke:
                 self.theme["stroke"] = stroke
+
+    def _multi(self, res: Results) -> bool:
+        return len({r["cls"] for r in res.rows if r["cls"]}) > 1
+
+    def measure_ref(self, res: Results, key: str) -> float:
+        """The widest entry of a column, in reference px."""
+        vals = [r.get(key, "") for r in res.rows] + [""]
+        return max(self.measure(v, 22 if key == "time" else 19) for v in vals) / self.k

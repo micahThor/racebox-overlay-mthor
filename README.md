@@ -384,10 +384,18 @@ this video's:
 
 The results show big over the picture, in the current theme, for the first
 10 seconds of the rendered video (from the render's start, so a trimmed
-render shows them at its own start), fading in and out. Each row has the
-position, race number, rider, class (with its colour) and time: the best lap
-for qualifying; the finishing time, or laps down, for a heat. Your row is
-highlighted (from your rider number in race mode). The panels on the picture
+render shows them at its own start), fading in and out. Every rider in the
+session is listed (non-finishers at the end, marked DNF / DNS), with all
+their results:
+
+- qualifying: position, race number, rider, class (with its colour, and
+  their place in class when there's more than one), laps, best lap and the
+  gap to pole;
+- heat: the same, plus the finishing time, with the gap to the winner (or
+  laps down).
+
+A big field gets tighter rows so everyone fits. Your row is highlighted (from
+your rider number in race mode). The panels on the picture
 step aside while the results show; panels in the frame's strips stay. Leave
 both empty to skip it. This works whether or not race mode is on for this
 video. Results are downloaded once and kept next to the video.
