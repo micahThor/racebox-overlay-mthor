@@ -63,6 +63,8 @@ def probe(path: str) -> dict:
     return {
         "width": w, "height": h, "fps": fps,
         "duration": float(info["format"].get("duration") or v.get("duration") or 0),
+        # the picture can be a few frames shorter than the file (the audio runs on)
+        "vduration": float(v.get("duration") or info["format"].get("duration") or 0),
         "created": created,
         "has_audio": any(s["codec_type"] == "audio" for s in info["streams"]),
     }
@@ -137,7 +139,14 @@ def _radio_mix(has_audio: bool) -> list[str]:
 
 
 def _init_worker(spec: dict) -> None:
+    """Each drawing process: its own HUD. Ctrl-C is the main process's to handle,
+    and when a render stops early the pool is shut down under the workers, so
+    their complaints about the closed pipe go nowhere (a real error in drawing
+    still reaches the main process, with the frame it failed on)."""
     global _HUD
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    sys.stderr = open(os.devnull, "w")
     _HUD = Hud(**spec)
 
 
@@ -160,7 +169,8 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     `workers` processes in parallel (default: one per CPU core, minus one)."""
     info = probe(video)
     fps = info["fps"]
-    end = min(end or info["duration"], info["duration"])
+    vdur = info.get("vduration") or info["duration"]
+    end = min(end or vdur, vdur)
     n_frames = int((end - start) * fps)
     if n_frames <= 0:
         raise RenderError("nothing to render: check --start/--end")
@@ -287,6 +297,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         from .ghost import GhostFeed
         feed = GhostFeed(hud.ghost.video or video, hud.ghost.fps or float(fps), slot[2], slot[3])
     wait_draw = wait_ffmpeg = 0.0          # where the time goes (for the summary line)
+    i = -1
     frames = iter(frames)
     try:
         for i in range(n_frames):
@@ -307,8 +318,18 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
                         hud.paste_ghost(arr, gf)
                         buf = arr.tobytes()
             a = time.time()
-            q.put(buf)
+            stalled = False
+            while True:                         # never block for good on an ffmpeg that has stopped
+                try:
+                    q.put(buf, timeout=0.5)
+                    break
+                except queue.Full:
+                    if proc.poll() is not None or not threads[0].is_alive():
+                        stalled = True
+                        break
             wait_ffmpeg += time.time() - a
+            if stalled:
+                break
             if i % 60 == 0 or i == n_frames - 1:
                 el = time.time() - t0
                 progress(i + 1, n_frames, (i + 1) / el if el else 0.0)
@@ -316,11 +337,16 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         print("\n  stopped; the partial file may not play")
     finally:
         if pool is not None:
-            pool.terminate()
+            done = i >= n_frames - 1 if n_frames else True
+            if done:                            # every frame used: let the workers finish cleanly
+                pool.close()
+            else:                               # stopped early (cancelled, or ffmpeg ended first)
+                pool.terminate()
             pool.join()
         if feed is not None:
             feed.close()
-        q.put(None)
+        if threads[0].is_alive():
+            q.put(None)
         threads[0].join()
         proc.wait()
         threads[1].join(timeout=5)
@@ -331,7 +357,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     if total > 5:
         slow = ("ffmpeg (decoding, laying in the panels and encoding)" if wait_ffmpeg > wait_draw
                 else f"drawing the panels ({workers} worker{'s' if workers > 1 else ''})")
-        print(f"  speed: {n_frames / total:.1f} fps at {out_w}x{out_h}; waited on drawing "
+        print(f"  speed: {(i + 1) / total:.1f} fps at {out_w}x{out_h}; waited on drawing "
               f"{wait_draw / total:.0%}, on ffmpeg {wait_ffmpeg / total:.0%} -> the slow part is {slow}",
               flush=True)
     if cancel is not None and cancel.is_set():
