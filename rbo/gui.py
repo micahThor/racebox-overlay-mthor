@@ -137,7 +137,8 @@ class Studio:
 
     def _race_key(self):
         p = self.proj
-        return [bool(p.get("race")), p.get("race_source"), str(p.get("race_number") or "")]
+        return [bool(p.get("race")), p.get("race_source"), str(p.get("race_number") or ""),
+                p.get("heat_source") or "", p.get("qual_source") or ""]
 
     def race(self):
         """The Race when race mode is on and loads, else None (see race_error)."""
@@ -152,7 +153,12 @@ class Studio:
                 cache = Path(self.video_path).with_name(Path(self.video_path).name + ".race.json")
                 self._race_data = racemod.load(p["race_source"], cache)
                 if p.get("race") and p.get("race_number"):
-                    self._race = racemod.Race(self._race_data, self.tm, str(p["race_number"]))
+                    try:              # the grid: the heat's results (a main) or qualifying (a heat)
+                        grid = resultsmod.grid_for_video(p, self.video_path)
+                    except (resultsmod.ResultsError, OSError, ValueError, KeyError):
+                        grid = None
+                    self._race = racemod.Race(self._race_data, self.tm, str(p["race_number"]),
+                                              grid_order=grid)
                 elif p.get("race"):
                     self.race_error = "pick your rider"
             except (racemod.RaceError, OSError, ValueError, KeyError) as e:

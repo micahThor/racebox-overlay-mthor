@@ -187,15 +187,48 @@ def build(kind: str, classification: dict, me: str = "", grid: list | None = Non
     return out
 
 
+def _src(proj: dict, key: str):
+    v = proj.get(key)
+    return v.strip() if isinstance(v, str) else v
+
+
+def _order(cls: dict) -> list[str]:
+    """Start numbers in finishing order (riders with no position at the end)."""
+    rows = sorted(cls.get("rows") or [], key=lambda r: (r.get("position") is None, r.get("position") or 0))
+    return [str(r.get("startNumber", "")).strip() for r in rows]
+
+
+def _load(proj: dict, video_path: str | None, kind: str, key: str):
+    cache = Path(video_path).with_name(Path(video_path).name + f".{kind}.json") if video_path else None
+    return load_session(_src(proj, key), cache)
+
+
 def from_project(proj: dict, video_path: str | None = None) -> Results | None:
     """The results to show for this video: the heat's if given (this is the
-    main), else qualifying's (this is the heat), else None."""
+    main), else qualifying's (this is the heat), else None. A heat's grid is
+    the qualifying order when qualifying is given too (Speedhive's own "start
+    positions" are the order the field first crossed the line, not the grid)."""
+    if _src(proj, "heat_source"):
+        cls, grid = _load(proj, video_path, "heat", "heat_source")
+        if _src(proj, "qual_source"):
+            try:
+                grid = _order(_load(proj, video_path, "qualifying", "qual_source")[0])
+            except ResultsError:
+                pass
+        return build("heat", cls, proj.get("race_number") or "", grid)
+    if _src(proj, "qual_source"):
+        cls, grid = _load(proj, video_path, "qualifying", "qual_source")
+        return build("qualifying", cls, proj.get("race_number") or "", grid)
+    return None
+
+
+def grid_for_video(proj: dict, video_path: str | None = None) -> list[str] | None:
+    """The starting grid of the race in this video, as start numbers: the heat's
+    finishing order (this video is the main), else qualifying's (it's the
+    heat), else None (Speedhive's lap chart is used)."""
     for kind, key in (("heat", "heat_source"), ("qualifying", "qual_source")):
-        src = (proj.get(key) or "").strip() if isinstance(proj.get(key), str) else proj.get(key)
-        if src:
-            cache = Path(video_path).with_name(Path(video_path).name + f".{kind}.json") if video_path else None
-            cls, grid = load_session(src, cache)
-            return build(kind, cls, proj.get("race_number") or "", grid)
+        if _src(proj, key):
+            return _order(_load(proj, video_path, kind, key)[0])
     return None
 
 

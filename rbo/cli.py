@@ -226,7 +226,16 @@ def load_race(args, tel, tm, quiet: bool = False):
             rows = sorted(data["classification"]["rows"], key=lambda r: r["position"])
             sys.exit("race mode needs your start number: --race-number N. Riders: "
                      + ", ".join(f"#{str(r['startNumber']).strip()} {r['name'].strip()}" for r in rows))
-        r = racemod.Race(data, tm, str(args.race_number))
+        from . import results as resultsmod
+        proj = dict(getattr(args, "project", None) or {})
+        for k in ("qual_source", "heat_source"):
+            if getattr(args, k, None) is not None:
+                proj[k] = getattr(args, k) or None
+        try:              # the grid: the heat's results (a main) or qualifying (a heat)
+            grid = resultsmod.grid_for_video(proj, getattr(args, "video", None))
+        except resultsmod.ResultsError:
+            grid = None
+        r = racemod.Race(data, tm, str(args.race_number), grid_order=grid)
     except racemod.RaceError as e:
         sys.exit(f"race mode: {e}")
     if not quiet:

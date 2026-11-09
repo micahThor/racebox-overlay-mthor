@@ -432,6 +432,14 @@ step aside while the results show; panels in the frame's strips stay. Leave
 both empty to skip it. This works whether or not race mode is on for this
 video. Results are downloaded once and kept next to the video.
 
+The earlier session also sets the starting grid in race mode: a main's grid
+is the heat's finishing order (all classes together), a heat's is the
+qualifying order. That's what the standings show before the start, what
+"up / down from the grid" counts from, and (for a heat, when qualifying is
+given too) the GRID column on the heat's results. Without it the grid comes
+from Speedhive's lap chart, whose "start positions" are really the order the
+field first crossed the line after the start, not the grid.
+
 From the command line: `--qual-source LINK` or `--heat-source LINK`.
 
 ## Saved layouts

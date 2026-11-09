@@ -123,7 +123,12 @@ class Event:
 
 
 class Race:
-    def __init__(self, data: dict, timing: Timing, number: str, offset: float | None = None):
+    def __init__(self, data: dict, timing: Timing, number: str, offset: float | None = None,
+                 grid_order: list[str] | None = None):
+        """grid_order: the starting grid as start numbers, when it's known from the
+        session before (the heat's results for a main, qualifying for a heat).
+        Without it the grid comes from Speedhive's lap chart, which is really the
+        order the field first crossed the line."""
         self.tm, self.tel = timing, timing.tel
         rows = {int(r["position"]): r for r in data["classification"]["rows"]}
         self.riders: list[Rider] = []
@@ -160,6 +165,15 @@ class Race:
                 rd = self.rider(str(row[0].get("startNumber", "")))
                 if rd:
                     rd.grid = i + 1
+        if grid_order:
+            ranked = [n for n in (str(x).strip().lower() for x in grid_order)
+                      if any(r.number.lower() == n for r in self.riders + self.untimed)]
+            rest = sorted((r for r in self.riders + self.untimed if r.number.lower() not in ranked),
+                          key=lambda r: (r.grid or 999, r.finish_pos))
+            for i, n in enumerate(ranked):
+                self.rider(n).grid = i + 1
+            for j, r in enumerate(rest):
+                r.grid = len(ranked) + j + 1
         self.me = self.rider(number)
         if self.me is None:
             raise RaceError(f"no rider number {number} in this race; numbers: "
@@ -340,16 +354,18 @@ class Race:
 
     def order_at(self, t: float) -> list[str]:
         """Running order at time t: everyone with lap times as estimated, and
-        anyone without kept at their official finishing place."""
+        anyone without kept at their grid slot before the start and at their
+        official finishing place after it."""
         i = int(np.clip((t - self.times[0]) / STEP, 0, len(self.times) - 1))
-        return self._with_untimed(self.orders[i])
+        return self._with_untimed(self.orders[i], on_grid=t < self.start)
 
-    def _with_untimed(self, order: list[str]) -> list[str]:
+    def _with_untimed(self, order: list[str], on_grid: bool = False) -> list[str]:
         if not self.untimed:
             return order
         out = list(order)
-        for r in self.untimed:                       # in finishing order
-            out.insert(min(r.finish_pos - 1, len(out)), r.number)
+        key = (lambda r: r.grid or r.finish_pos) if on_grid else (lambda r: r.finish_pos)
+        for r in sorted(self.untimed, key=key):
+            out.insert(min(key(r) - 1, len(out)), r.number)
         return out
 
     def pos(self, number: str, t: float, cls: str | None = None) -> int:
