@@ -423,7 +423,8 @@ class Studio:
             return None
         start = float(((self.proj.get("trim") or {}).get("start")) or 0.0)
         x, y, w, hh, _ = h.results_rect(len(r.rows))
-        return {"src": f"/api/results.png?k={id(h)}", "rect": [x, y, w, hh],
+        return {"src": f"/api/results.png?k={id(h)}-{len(r.rows)}-{hash(json.dumps(r.rows, sort_keys=True, default=str)) & 0xffffff}",
+                "rect": [x, y, w, hh],
                 "show": 0 <= vt - start < resultsmod.RESULTS_SECONDS}
 
     def update_project(self, changes: dict) -> dict:
@@ -717,7 +718,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = buf.getvalue()
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
-                self.send_header("Cache-Control", "max-age=3600")
+                self.send_header("Cache-Control", "no-store")     # never a stale board
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

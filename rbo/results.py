@@ -26,10 +26,11 @@ FADE_IN, FADE_OUT = 0.5, 0.7
 TITLES = {"qualifying": "QUALIFYING", "heat": "HEAT RACE"}
 # the columns after the class, right-aligned: (key, heading, right edge in reference px)
 COLUMNS = {
-    "qualifying": [("laps", "LAPS", 770), ("time", "BEST LAP", 920), ("gap", "GAP", 1060)],
-    "heat": [("laps", "LAPS", 650), ("best", "BEST LAP", 790), ("time", "TIME", 935), ("gap", "GAP", 1060)],
+    "qualifying": [("laps", "LAPS", 830), ("time", "BEST LAP", 990), ("gap", "GAP", 1130)],
+    "heat": [("laps", "LAPS", 750), ("best", "BEST LAP", 880), ("time", "TIME", 1010), ("gap", "GAP", 1130)],
 }
-CLASS_X = {"qualifying": 540, "heat": 470}
+GRID_X = 690            # right edge of the heat's GRID column (with places gained / lost)
+CLASS_X = {"qualifying": 560, "heat": 470}
 
 
 class ResultsError(Exception):
@@ -41,6 +42,7 @@ class Results:
     kind: str                       # "qualifying" or "heat"
     rows: list = field(default_factory=list)   # {pos, number, name, cls, time}
     me: str = ""                    # your start number, highlighted
+    has_grid: bool = False          # a heat whose starting grid Speedhive knows
 
     @property
     def title(self) -> str:
@@ -67,35 +69,57 @@ def _fmt(v: float | None) -> str:
     return f"{int(m)}:{s:06.3f}" if m else f"{s:.3f}"
 
 
-def load_classification(source: str, cache: Path | None = None) -> dict:
-    """The Speedhive classification for a session link/number, or a saved JSON
-    file (a whole race-mode download or just the classification)."""
+def _get(sid: str, ep: str):
+    from .race import API
+    req = urllib.request.Request(API.format(sid=sid, ep=ep),
+                                 headers={"User-Agent": "racebox-overlay", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode())
+
+
+def _starts(lapchart) -> list:
+    """Start numbers in grid order, from a Speedhive lap chart."""
+    return [str(x.get("startNumber", "")).strip() for x in ((lapchart or {}).get("startPositions") or [])]
+
+
+def load_session(source: str, cache: Path | None = None) -> tuple[dict, list]:
+    """(classification, grid) for a Speedhive session link/number, or a saved
+    JSON file (a whole race-mode download, or just the classification). The
+    grid is the start numbers in starting order (empty if Speedhive has none)."""
     from .race import session_id
     p = Path(str(source)).expanduser()
     if p.exists():
         data = json.loads(p.read_text())
-        return data.get("classification", data)
+        return data.get("classification", data), _starts(data.get("lapchart"))
     sid = session_id(source)
     if not sid:
         raise ResultsError(f"not a Speedhive session link, number or file: {source}")
     if cache and cache.exists():
         try:
             data = json.loads(cache.read_text())
-            if str(data.get("session")) == sid:
-                return data["classification"]
+            if str(data.get("session")) == str(sid) and "lapchart" in data:
+                return data["classification"], _starts(data["lapchart"])
         except (OSError, json.JSONDecodeError, KeyError):
             pass
-    from .race import API
-    req = urllib.request.Request(API.format(sid=sid, ep="classification"),
-                                 headers={"User-Agent": "racebox-overlay", "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            cls = json.loads(r.read().decode())
+        cls = _get(sid, "classification")
     except Exception as e:  # noqa: BLE001
         raise ResultsError(f"couldn't download the Speedhive results for session {sid}: {e}") from e
+    try:
+        lap = _get(sid, "lapchart")
+        lap = {"startPositions": lap.get("startPositions") or []}
+    except Exception:  # noqa: BLE001 - the grid is a nice-to-have
+        lap = {"startPositions": []}
     if cache:
-        cache.write_text(json.dumps({"session": int(sid), "classification": cls}))
-    return cls
+        try:
+            cache.write_text(json.dumps({"session": int(sid), "classification": cls, "lapchart": lap}))
+        except OSError:
+            pass
+    return cls, _starts(lap)
+
+
+def load_classification(source: str, cache: Path | None = None) -> dict:
+    return load_session(source, cache)[0]
 
 
 def _gap(v: float) -> str:
@@ -118,7 +142,7 @@ def _status(r: dict) -> str:
     return ""
 
 
-def build(kind: str, classification: dict, me: str = "") -> Results:
+def build(kind: str, classification: dict, me: str = "", grid: list | None = None) -> Results:
     """Every rider in the session, in finishing order (riders without a
     position at the end), with all their results: laps, best lap, total time
     and the gap to the leader (to pole, for qualifying)."""
@@ -130,6 +154,7 @@ def build(kind: str, classification: dict, me: str = "") -> Results:
     lead = rows_in[0]
     pole = min((v for v in (_secs(r.get("bestTime")) for r in rows_in) if v), default=None)
     lead_total = _secs(lead.get("totalTime"))
+    slot = {n: i + 1 for i, n in enumerate(grid or []) if n}
     rows = []
     for r in rows_in:
         laps = r.get("numberOfLaps")
@@ -155,8 +180,11 @@ def build(kind: str, classification: dict, me: str = "") -> Results:
                      "cpos": r.get("positionInClass"),
                      "laps": "" if laps is None else str(laps),
                      "best": _fmt(best) if best else "—",
-                     "time": t, "gap": gap})
-    return Results(kind, rows, str(me or "").strip())
+                     "time": t, "gap": gap,
+                     "grid": slot.get(str(r.get("startNumber", "")).strip())})
+    out = Results(kind, rows, str(me or "").strip())
+    out.has_grid = kind == "heat" and any(r["grid"] for r in rows)
+    return out
 
 
 def from_project(proj: dict, video_path: str | None = None) -> Results | None:
@@ -166,14 +194,15 @@ def from_project(proj: dict, video_path: str | None = None) -> Results | None:
         src = (proj.get(key) or "").strip() if isinstance(proj.get(key), str) else proj.get(key)
         if src:
             cache = Path(video_path).with_name(Path(video_path).name + f".{kind}.json") if video_path else None
-            return build(kind, load_classification(src, cache), proj.get("race_number") or "")
+            cls, grid = load_session(src, cache)
+            return build(kind, cls, proj.get("race_number") or "", grid)
     return None
 
 
 class ResultsMixin:
     """Mixed into Hud: draws the results card in the theme."""
 
-    RW = 1090           # reference width of the card
+    RW = 1160           # reference width of the card
 
     def results_rect(self, n_rows: int) -> tuple:
         """(x, y, w, h, k) of the card in the output frame: most of the picture,
@@ -233,6 +262,9 @@ class ResultsMixin:
         c_pos, c_num, c_name = pad + 40, pad + 128, pad + 148
         c_cls = CLASS_X.get(res.kind, 470)
         first_col = min(x - self.measure_ref(res, k) for k, _, x in cols)
+        if res.has_grid:
+            first_col = min(first_col, GRID_X - 78)
+            self.text(d, S(GRID_X), S(122), "GRID", 13, "dim", "r", track=1.5)
         hy = 122
         for x_, s_, a_ in ((c_pos, "POS", "r"), (c_num, "NO.", "r"), (c_name, "RIDER", "l")):
             self.text(d, S(x_), S(hy), s_, 13, "dim", a_, track=1.5)
@@ -275,6 +307,8 @@ class ResultsMixin:
                 while csz > 10 and self.measure(cname, csz) > croom:
                     csz -= 1
                 self.text(d, S(c_cls + 20), base, cname, csz, dim)
+            if res.has_grid and r.get("grid"):
+                self._grid_cell(d, base, r, ink if me else self.col("white"), me)
             for k_, _, x_ in cols:
                 v = r.get(k_, "")
                 if not v:
@@ -286,6 +320,23 @@ class ResultsMixin:
                 self.text(d, S(x_), base, v, sz, ink if main or me else dim, "r")
             if stroke:
                 self.theme["stroke"] = stroke
+
+    def _grid_cell(self, d, base, r, ink, me):
+        """Where they started, and the places gained (green, up) or lost (red, down)."""
+        S = self.S
+        self.text(d, S(GRID_X - 38), base, str(r["grid"]), 20, ink, "r")
+        if not r.get("pos") or r.get("time") in STATUS_WORDS:
+            return
+        moved = r["grid"] - r["pos"]
+        if not moved:
+            return
+        up = moved > 0
+        col = ink if me else self.C["green"] if up else self.C["red"]
+        x0, cy, w = S(GRID_X - 32), base - S(6), S(9)
+        tri = ([(x0, cy + w / 2), (x0 + w, cy + w / 2), (x0 + w / 2, cy - w / 2)] if up else
+               [(x0, cy - w / 2), (x0 + w, cy - w / 2), (x0 + w / 2, cy + w / 2)])
+        d.polygon(tri, fill=col)
+        self.text(d, S(GRID_X), base, str(abs(moved)), 14, col, "r")
 
     def _multi(self, res: Results) -> bool:
         return len({r["cls"] for r in res.rows if r["cls"]}) > 1

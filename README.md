@@ -392,7 +392,11 @@ their results:
   their place in class when there's more than one), laps, best lap and the
   gap to pole;
 - heat: the same, plus the finishing time, with the gap to the winner (or
-  laps down).
+  laps down), and **GRID**: where each rider started the heat, with the
+  places they gained (green, up) or lost (red, down). The grid comes from
+  Speedhive's lap chart; it's left out if Speedhive doesn't have one.
+
+All classes in the session are listed together, in overall finishing order.
 
 A big field gets tighter rows so everyone fits. Your row is highlighted (from
 your rider number in race mode). The panels on the picture
