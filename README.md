@@ -388,6 +388,11 @@ the running order, since that's the best estimate there is),
 **PIT** (they started late from the pits and aren't out yet), **OUT**
 (retired), or **FIN** (finished).
 
+Passes in the standings (and the crew chief's pass calls) are only ones the
+timing confirms: two riders swap places only if they cross the next line the
+other way round. When they do, the swap is shown where the estimate of their
+positions puts it, mid-lap, rather than waiting for the line.
+
 Riders in the official results with no lap times (Speedhive sometimes has
 none for a rider whose transponder didn't read, even the winner) are still
 in the standings, kept at their official finishing place for the whole race
@@ -643,8 +648,12 @@ session at that track with `--track mytrack.json`. See
   it (time, line, braking point, corner speed), turns findings into calls,
   speaks them, adds the radio sound and schedules them so none overlap.
 - `rbo/race.py` — race mode: downloads Speedhive timing, lines it up with
-  your RaceBox laps, estimates everyone's position between crossings, finds
-  passes (a new order has to hold 1.5 s), and writes the race calls.
+  your RaceBox laps, works out the running order and the passes, and writes
+  the race calls. The order is the timing screen's (laps completed, then who
+  crossed the line first); a pass between two riders is only shown if the
+  line confirms it (they cross the next line the other way round), and then
+  at the moment the mid-lap estimate puts it, so a guess about where someone
+  is on track never shows a pass that didn't happen.
 - `rbo/themes.py`, `rbo/project.py` — themes, and the per-video settings file.
 - `rbo/video.py` — ffmpeg crops the panels back out, overlays them, and
   encodes with VideoToolbox, copying the original audio.

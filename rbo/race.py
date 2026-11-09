@@ -271,17 +271,45 @@ class Race:
             frac = float(np.interp(tau, *(self._start_shape if n == 0 else self._shape)))
         return n + min(max(frac, 0.0), 0.999)
 
-    def _key(self, r: Rider, t: float):
-        n = int(np.searchsorted(r.cross, t, side="right"))
-        g = -float(r.grid or 99)                   # ties (still on the grid): grid order
-        if n >= len(r.cross):                      # finished: laps, then who finished first
-            return (float(len(r.cross)), -float(r.cross[-1]), g)
-        return (self.progress(r, t), 0.0, g)
+    def _line_key(self, r: Rider, n: int):
+        """Order at the line, the way the timing screen ranks: laps completed, then
+        who crossed first on that lap (before anyone's first crossing: grid order)."""
+        g = -float(r.grid or 99)
+        if n == 0:
+            return (0.0, 0.0, g)
+        n = min(n, len(r.cross))
+        return (float(n), -float(r.cross[n - 1]), g)
+
+    def _ahead(self, a: Rider, b: Rider, t: float, prog: dict) -> bool:
+        """Whether a is ahead of b at time t. Where each is mid-lap is only an
+        estimate, so it's only trusted for a pass the timing confirms: if a and b
+        are in the same order at their last line and at their next one, that's
+        the order (no pass shown, whatever the estimate says); if the order at
+        the next line is the other way round, there's a pass this lap, and the
+        estimate says when."""
+        na = int(np.searchsorted(a.cross, t, side="right"))
+        nb = int(np.searchsorted(b.cross, t, side="right"))
+        now = self._line_key(a, na) > self._line_key(b, nb)
+        nxt = self._line_key(a, na + 1) > self._line_key(b, nb + 1)
+        if now == nxt:
+            return now
+        for r in (a, b):
+            if r.number not in prog:
+                prog[r.number] = self.progress(r, t)
+        return prog[a.number] > prog[b.number]
 
     def raw_order(self, t: float) -> list[Rider]:
         if t < self.start:
             return sorted(self.riders, key=lambda r: (r.grid or 99, r.finish_pos))
-        return sorted(self.riders, key=lambda r: self._key(r, t), reverse=True)
+        prog: dict = {}
+        out = sorted(self.riders, key=lambda r: (r.grid or 99, r.finish_pos))
+        # insertion sort with the pairwise rule above (cheap: nearly sorted)
+        for i in range(1, len(out)):
+            j = i
+            while j > 0 and self._ahead(out[j], out[j - 1], t, prog):
+                out[j - 1], out[j] = out[j], out[j - 1]
+                j -= 1
+        return out
 
     def _timeline(self):
         """Running order every STEP seconds, with hysteresis, plus events."""
