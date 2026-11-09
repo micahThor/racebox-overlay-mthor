@@ -382,7 +382,9 @@ When riders are nose to tail and their tags overlap, the one ahead in the
 race is on top (your own marker is always on top). While the field is
 lined up on the grid before the start, everyone is shown in grid order around
 your spot (rows of two). A rider in the standings with no tag on the map says
-why in place of the gap: **NO TIME** (Speedhive has no lap times for them),
+why in place of the gap: **NO TIME** (Speedhive has no lap times for them;
+they still get a tag, drawn a second ahead of the timed rider behind them in
+the running order, since that's the best estimate there is),
 **PIT** (they started late from the pits and aren't out yet), **OUT**
 (retired), or **FIN** (finished).
 

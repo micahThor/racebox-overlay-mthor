@@ -486,6 +486,31 @@ class Race:
                 continue
             pr = self.progress(r, t)
             out.append((r.number, pr - math.floor(pr)))
+        out += self._untimed_field(t, cls)
+        return out
+
+    UNTIMED_LEAD = 1.0       # seconds an untimed rider is drawn ahead of the rider behind them
+
+    def _untimed_field(self, t: float, cls: str | None) -> list[tuple[str, float]]:
+        """Riders with no lap times can't be followed round the lap, but their
+        finishing place is known. Draw each one just ahead of the timed rider
+        behind them in the running order (an estimate), so the leader (say)
+        still has a tag on the map."""
+        if not self.untimed:
+            return []
+        order = self.order_at(t)
+        out = []
+        for r in self.untimed:
+            if cls and r.cls != cls or r.number not in order:
+                continue
+            i = order.index(r.number)
+            behind = next((self.rider(n) for n in order[i + 1:] if self.is_timed(n)), None)
+            if behind is None or not self.on_track(behind, t):
+                continue
+            ahead = sum(1 for n in order[i + 1:order.index(behind.number)] if not self.is_timed(n))
+            lap = float(np.nanmedian(behind.lap_times)) if behind.lap_times else 60.0
+            pr = self.progress(behind, t) + self.UNTIMED_LEAD * (ahead + 1) / max(lap, 1.0)
+            out.append((r.number, pr - math.floor(pr)))
         return out
 
     # ------------------------------------------------------------ traffic
