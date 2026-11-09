@@ -286,8 +286,16 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     if slot:
         from .ghost import GhostFeed
         feed = GhostFeed(hud.ghost.video or video, hud.ghost.fps or float(fps), slot[2], slot[3])
+    wait_draw = wait_ffmpeg = 0.0          # where the time goes (for the summary line)
+    frames = iter(frames)
     try:
-        for i, buf in enumerate(frames):
+        for i in range(n_frames):
+            a = time.time()
+            try:
+                buf = next(frames)
+            except StopIteration:
+                break
+            wait_draw += time.time() - a
             if proc.poll() is not None or (cancel is not None and cancel.is_set()):
                 break
             if feed is not None:
@@ -298,7 +306,9 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
                         arr = np.frombuffer(buf, np.uint8).reshape(hud.atlas_h, hud.atlas_w, 4).copy()
                         hud.paste_ghost(arr, gf)
                         buf = arr.tobytes()
+            a = time.time()
             q.put(buf)
+            wait_ffmpeg += time.time() - a
             if i % 60 == 0 or i == n_frames - 1:
                 el = time.time() - t0
                 progress(i + 1, n_frames, (i + 1) / el if el else 0.0)
@@ -317,6 +327,13 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     shutil.rmtree(frame_dir, ignore_errors=True)
     if progress is show:
         print()
+    total = time.time() - t0
+    if total > 5:
+        slow = ("ffmpeg (decoding, laying in the panels and encoding)" if wait_ffmpeg > wait_draw
+                else f"drawing the panels ({workers} worker{'s' if workers > 1 else ''})")
+        print(f"  speed: {n_frames / total:.1f} fps at {out_w}x{out_h}; waited on drawing "
+              f"{wait_draw / total:.0%}, on ffmpeg {wait_ffmpeg / total:.0%} -> the slow part is {slow}",
+              flush=True)
     if cancel is not None and cancel.is_set():
         raise RenderError("render cancelled; the partial file may not play")
     if proc.returncode:
