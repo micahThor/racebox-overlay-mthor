@@ -77,10 +77,35 @@ def grab_frame(path: str, t: float) -> Image.Image:
     return Image.open(io.BytesIO(png)).convert("RGB")
 
 
+# The Mac's hardware H.264 encoder stops at 4096x2304; past that VideoToolbox
+# quietly falls back to a slow software encoder. Its HEVC encoder goes to 8K.
+H264_HW_MAX = (4096, 2304)
+
+
+def _ffmpeg_list(flag: str) -> str:
+    return subprocess.run([need("ffmpeg"), "-hide_banner", flag], capture_output=True, text=True).stdout
+
+
+def pick_codec(codec: str, width: int, height: int, quality: str) -> tuple[str, str]:
+    """(codec, note): H.264 frames too big for the hardware encoder go out as
+    HEVC instead, which the hardware can do (many times faster)."""
+    if codec != "h264" or quality == "best":
+        return codec, ""
+    big = max(width, height) > H264_HW_MAX[0] or width * height > H264_HW_MAX[0] * H264_HW_MAX[1]
+    if big and "hevc_videotoolbox" in _ffmpeg_list("-encoders"):
+        return "hevc", (f"{width}x{height} is too big for the Mac's H.264 hardware encoder; "
+                        "encoding HEVC on the hardware instead (much faster; plays on Macs, iPhones and YouTube)")
+    return codec, ""
+
+
+def decode_args() -> list[str]:
+    """Decode the camera's video on the Mac's media engine when there is one."""
+    return ["-hwaccel", "videotoolbox"] if "videotoolbox" in _ffmpeg_list("-hwaccels") else []
+
+
 def encoder_args(codec: str, width: int, height: int, fps: float, bitrate: str | None,
                  quality: str) -> list[str]:
-    encoders = subprocess.run([need("ffmpeg"), "-hide_banner", "-encoders"],
-                              capture_output=True, text=True).stdout
+    encoders = _ffmpeg_list("-encoders")
     hw = f"{codec}_videotoolbox"
     if quality != "best" and hw in encoders:
         if not bitrate:
@@ -149,16 +174,32 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     parts = [f"[1:v]split={len(hud.panels)}" + "".join(f"[a{i}]" for i in range(len(hud.panels)))]
     prev = "0:v"
     out_w, out_h = info["width"], info["height"]
-    # the frame round the video: pad to the full size, then lay the themed frame
-    # (a still image, clear over the picture) on top
-    c = "".join(f"{v:02x}" for v in hud.side_colour())
+    # the frame round the video: the themed frame (a still image, converted
+    # once and repeated) is the background; the video is laid into its opening,
+    # then the frame's shaped corners go back over the video's corners. (Laying
+    # a full-size see-through frame over every video frame cost far more.)
     out_w, out_h = hud.canvas_w, hud.canvas_h
     frame_dir = tempfile.mkdtemp(prefix="rbo-frame-")
     frame_png = os.path.join(frame_dir, "frame.png")
-    hud.frame_image().save(frame_png)
-    fi = 3 if radio else 2                     # the frame's input number
-    parts.append(f"[0:v]pad={out_w}:{out_h}:{hud.vid_x0}:{hud.vid_y0}:color=0x{c}[pad]")
-    parts.append(f"[pad][{fi}:v]overlay=0:0:shortest=1:format=auto[base]")
+    corners_png = os.path.join(frame_dir, "corners.png")
+    fimg = hud.frame_image()
+    fimg.save(frame_png)
+    cs, corners = hud.frame_corners()
+    strip = Image.new("RGBA", (cs * 4, cs), (0, 0, 0, 0))
+    for k, (cx, cy) in enumerate(corners):
+        strip.paste(fimg.crop((cx, cy, cx + cs, cy + cs)), (k * cs, 0))
+    strip.save(corners_png)
+    fi = 3 if radio else 2                     # the frame's input number (the corners follow it)
+    fr = f"{fps.numerator}/{fps.denominator}"
+    parts.append(f"[{fi}:v]format=yuv420p,loop=loop=-1:size=1:start=0[bg]")
+    parts.append(f"[bg][0:v]overlay={hud.vid_x0}:{hud.vid_y0}:shortest=1[vid]")
+    parts.append(f"[{fi + 1}:v]format=yuva420p,loop=loop=-1:size=1:start=0,split=4[c0][c1][c2][c3]")
+    prev = "vid"
+    for k, (cx, cy) in enumerate(corners):
+        parts.append(f"[c{k}]crop={cs}:{cs}:{k * cs}:0[cc{k}]")
+        parts.append(f"[{prev}][cc{k}]overlay={cx}:{cy}:shortest=1[vc{k}]")
+        prev = f"vc{k}"
+    parts.append(f"[{prev}]null[base]")
     prev = "base"
     # an earlier session's results, big over the picture for the first seconds:
     # the panels on the picture wait until it fades (the strips' stay put)
@@ -170,7 +211,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         res_png = os.path.join(frame_dir, "results.png")
         hud.results_card(res).save(res_png)
         rx, ry, _, _, _ = hud.results_rect(len(res.rows))
-        res_in = ["-loop", "1", "-framerate", f"{fps.numerator}/{fps.denominator}",
+        res_in = ["-loop", "1", "-framerate", fr,
                   "-t", f"{RESULTS_SECONDS:.2f}", "-i", res_png]
         hold = f":enable='gte(t,{RESULTS_SECONDS - FADE_OUT / 2:.2f})'"
     for i, p in enumerate(hud.panels):
@@ -180,7 +221,7 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         parts.append(f"[{prev}][p{i}]overlay={p.x}:{p.y}:format=auto{en}[{nxt}]")
         prev = nxt
     if res_in:
-        ri = fi + 1
+        ri = fi + 2
         parts.append(f"[{ri}:v]format=rgba,fade=t=in:st=0:d={FADE_IN}:alpha=1,"
                      f"fade=t=out:st={RESULTS_SECONDS - FADE_OUT:.2f}:d={FADE_OUT}:alpha=1[res]")
         parts.append(f"[{prev}][res]overlay={rx}:{ry}:format=auto:eof_action=pass[vres]")
@@ -188,11 +229,11 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
     parts.append(f"[{prev}]format=yuv420p[vout]")
 
     cmd = [need("ffmpeg"), "-v", "error", "-nostats", "-y",
-           "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", video,
+           *decode_args(), "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", video,
            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{hud.atlas_w}x{hud.atlas_h}",
            "-r", f"{fps.numerator}/{fps.denominator}", "-i", "pipe:0",
            *(["-i", radio] if radio else []),
-           "-loop", "1", "-framerate", f"{fps.numerator}/{fps.denominator}", "-i", frame_png,
+           "-framerate", fr, "-i", frame_png, "-framerate", fr, "-i", corners_png,
            *res_in,
            "-filter_complex", ";".join(parts + _radio_mix(info["has_audio"]) if radio else parts),
            "-map", "[vout]"]
@@ -200,6 +241,9 @@ def render(video: str, hud: Hud, offset: float, out: str, start: float = 0.0,
         cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
     elif info["has_audio"]:
         cmd += ["-map", "0:a:0", "-c:a", "copy"]
+    codec, note = pick_codec(codec, out_w, out_h, quality)
+    if note:
+        print(f"  {note}", flush=True)
     cmd += encoder_args(codec, out_w, out_h, float(fps), bitrate, quality)
     cmd += ["-movflags", "+faststart", "-shortest", out]
 

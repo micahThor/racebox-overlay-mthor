@@ -626,6 +626,28 @@ session at that track with `--track mytrack.json`. See
 - `rbo/video.py` — ffmpeg crops the panels back out, overlays them, and
   encodes with VideoToolbox, copying the original audio.
 
+### Render speed
+
+A render runs three things at once: Python drawing the moving panels (on
+every CPU core but one), ffmpeg decoding the camera video, and the encoder.
+What keeps it quick:
+
+- The camera's video is decoded on the Mac's media engine.
+- The Mac's H.264 hardware encoder only goes up to 4096x2304. An upright
+  GO 3S clip in the frame is bigger than that (about 2874x3412), and above
+  that size macOS quietly switches to a slow software H.264 encoder. So a
+  frame that size is encoded as HEVC on the hardware instead (the terminal
+  says so); it plays on Macs, iPhones and YouTube. `--quality best` still
+  uses the software encoder you asked for.
+- The themed frame is turned into video once and the camera picture laid
+  into it, instead of blending a full-size see-through frame over every
+  picture.
+- Panels that never change (event, track and date names, logos) are drawn
+  once; only the moving panels are redrawn and shrunk each frame.
+
+The terminal (and the editor's render bar) show frames per second while it
+runs.
+
 ## Ideas for next steps
 
 - Lap comparison (ghost of best lap on the map, delta graph).

@@ -384,6 +384,13 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
         from .frame import frame_colour
         return frame_colour(self.theme)
 
+    def frame_corners(self) -> tuple[int, list]:
+        """(size, [(x, y) x4]): squares at the video's four corners, in output
+        pixels, holding the frame's shaped corners that lie over the picture."""
+        cs = int(round(min(self.W, self.H) * 0.05 / 2)) * 2 + 4
+        x0, y0, x1, y1 = self.vid_x0, self.vid_y0, self.vid_x0 + self.W, self.vid_y0 + self.H
+        return cs, [(x0, y0), (x1 - cs, y0), (x0, y1 - cs), (x1 - cs, y1 - cs)]
+
     def frame_image(self) -> Image.Image:
         """The themed frame round the video, at output size (clear over the picture)."""
         if getattr(self, "_frame", None) is None:
@@ -1015,16 +1022,32 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
 
     # ------------------------------------------------------------ dynamic layer
 
+    STILL_PANELS = ("text", "logo", "none")     # nothing on them changes during the video
+
     def render_atlas(self, t: float) -> Image.Image:
+        """The atlas for time t, at output size. Panels that never change come
+        from a copy shrunk once; only the moving panels' visible parts are
+        drawn and shrunk each frame."""
         img = self.static.copy()
         d = ImageDraw.Draw(img)
         st = self.timing.state(t)
+        ss = self.ss
+        if ss <= 1:
+            for p in self.panels:
+                self._use(p)
+                p.draw(img, d, p, t, st)
+            return img
+        if getattr(self, "_static_small", None) is None:
+            self._static_small = self.static.reduce(ss)
+        out = self._static_small.copy()
         for p in self.panels:
+            if p.name in self.STILL_PANELS:
+                continue
             self._use(p)
             p.draw(img, d, p, t, st)
-        if self.ss > 1:
-            img = img.reduce(self.ss)
-        return img
+            box = (p.vx * ss, p.iay + p.vy * ss, (p.vx + p.vw) * ss, p.iay + (p.vy + p.vh) * ss)
+            out.paste(img.crop(box).reduce(ss), (p.vx, p.ay + p.vy))
+        return out
 
     def compose(self, frame: Image.Image, t: float, ghost_frame=None) -> Image.Image:
         """Paste the panels onto a full video frame (used for previews).
