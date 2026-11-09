@@ -371,6 +371,21 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
+The RaceBox's first lap in a race is the warm-up lap and the wait on the
+grid, so in race mode the lap timer starts at the race start: that lap isn't
+timed, counted, used as a best or called by the crew chief (laps are numbered
+from the start, like Speedhive's). The editor's Sync tab still lists it, for
+lining up.
+
+On the map, every rider who's on track has a tag; when riders are nose to
+tail the tags are nudged apart (along the track and to either side) so every
+number can be read, and none hide under your own marker. While the field is
+lined up on the grid before the start, everyone is shown in grid order around
+your spot (rows of two). A rider in the standings with no tag on the map says
+why in place of the gap: **NO TIME** (Speedhive has no lap times for them),
+**PIT** (they started late from the pits and aren't out yet), **OUT**
+(retired), or **FIN** (finished).
+
 Riders in the official results with no lap times (Speedhive sometimes has
 none for a rider whose transponder didn't read, even the winner) are still
 in the standings, kept at their official finishing place for the whole race

@@ -99,6 +99,23 @@ class Timing:
         self._assign_splits()
         self._lap_profiles = [self._profile(l) for l in self.laps]
 
+    def race_view(self, t0: float, slack: float = 2.0) -> "Timing":
+        """The same timing with only the laps that start at or after t0 (the
+        race start), numbered from 1. In race mode the RaceBox's first lap is
+        the warm-up lap and the wait on the grid; it isn't a race lap."""
+        import copy
+        keep = [i for i, l in enumerate(self.laps) if l.t_start >= t0 - slack]
+        if len(keep) == len(self.laps):
+            return self
+        out = copy.copy(self)
+        out.laps = [Lap(n + 1, self.laps[i].t_start, self.laps[i].t_end, self.laps[i].splits)
+                    for n, i in enumerate(keep)]
+        out._lap_profiles = [self._lap_profiles[i] for i in keep]
+        out.skipped = len(self.laps) - len(keep)
+        return out
+
+    skipped = 0
+
     # ------------------------------------------------------------ gates
 
     def _gate_at(self, lat: float, lon: float, heading_deg: float | None = None) -> Gate:

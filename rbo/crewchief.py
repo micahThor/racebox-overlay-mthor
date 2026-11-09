@@ -263,13 +263,18 @@ class CrewChief:
         streak_said = 0
         grids = [self._grid(p) for p in self._profiles] if len(laps) >= 2 else []
 
+        # race mode: the first RaceBox lap is the warm-up and the wait on the grid,
+        # not a race lap: no calls about it, it isn't a best, and laps count from the start
+        skip = sum(1 for l in laps if l.t_start < self.race.start - 2.0) if self.race is not None else 0
         for k, lap in enumerate(laps):
-            n = lap.number
+            if k < skip:
+                continue
+            n = lap.number - skip
             secs = lap.sectors
 
             # ---- purple sectors (not on the first lap: everything is a best then)
             final_purple = False
-            if secs and best_sectors and k > 0:
+            if secs and best_sectors and k > skip:
                 for i, sv in enumerate(secs):
                     if sv < best_sectors[i] - 0.005:
                         if "sector" not in self.on:
@@ -325,7 +330,7 @@ class CrewChief:
                 best_so_far = lap
             if self.clean[k] and (best_clean is None or lap.time < best_clean.time):
                 best_clean = lap
-            if best_sectors and k > 0 and "theoretical" in self.on:
+            if best_sectors and k > skip and "theoretical" in self.on:
                 theo = sum(best_sectors)
                 if theo < best_so_far.time - 0.15 and (last_theo is None or theo < last_theo - 0.05):
                     msg = f"There's a {say_laptime(theo)} in you."
@@ -338,7 +343,7 @@ class CrewChief:
                 out.append(Call(lap.t_end + 0.8, " ".join(parts), "lap", 1, n))
 
             # ---- consistency streaks
-            times = [l.time for l in laps[:k + 1]]
+            times = [l.time for l in laps[skip:k + 1]]
             streak = 1
             while streak < len(times):
                 win = times[-(streak + 1):]

@@ -170,6 +170,10 @@ class Race:
         for r in self.riders:
             r.cross = r.raw + self.offset
         self.start = self._race_start()
+        # my RaceBox laps that are race laps (not the warm-up lap and the wait on the grid)
+        self.timing = timing.race_view(self.start)
+        timed_leader = min(self.riders, key=lambda r: r.finish_pos)
+        self.chequer = float(timed_leader.cross[-1])        # when the first finisher took the flag
         self._shape = self._lap_shape()
         self._start_shape = self._first_lap_shape()
         self._timeline()
@@ -391,7 +395,7 @@ class Race:
         prev_order, since = order, 99.0
         for ct, before, after in reversed(self.changes):
             if ct <= t:
-                prev_order, since = before, t - ct
+                prev_order, since = self._with_untimed(before), t - ct
                 break
         if cls:
             order = [n for n in order if self.rider(n).cls == cls]
@@ -413,12 +417,53 @@ class Race:
                         gap = None
             rows.append({"number": n, "name": r.last_name, "cls": r.cls, "row": j + (i - j) * k,
                          "moved": moved, "me": r is self.me, "gap": gap,
-                         "lapped": self.laps_down(r, t) >= 1})
+                         "lapped": self.laps_down(r, t) >= 1, "tag": self.tag(r, t)})
         me_done = int(np.searchsorted(self.me.cross, t, side="right"))
         return {"rows": rows, "pos": order.index(self.me.number) + 1 if self.me.number in order else None,
                 "of": len(order), "lap": min(me_done + 1, self.total_laps), "laps": self.total_laps,
                 "finished": me_done >= len(self.me.cross), "started": t >= self.start,
                 "final_lap": me_done == self.total_laps - 1}
+
+    def on_track(self, r: Rider, t: float) -> bool:
+        """Whether a rider is out on track at time t (so has a dot on the map)."""
+        if not len(r.cross) or t < self.start or t >= r.cross[-1]:
+            return False
+        return self._went(r) <= max(t + 0.5, self.start + 10.0)
+
+    def _went(self, r: Rider) -> float:
+        """When a rider left the line (a few seconds after the start from the
+        grid; much later from the pits)."""
+        lt0 = r.lap_times[0] if r.lap_times and np.isfinite(r.lap_times[0]) else 0.0
+        return float(r.cross[0] - lt0)
+
+    def tag(self, r: Rider, t: float) -> str | None:
+        """Why a rider in the standings has no dot on the map: no lap times from
+        Speedhive, not out yet (a late start from the pits), retired, or done."""
+        if not len(r.cross):
+            return "NO TIME"
+        if t < self.start or self.on_track(r, t):
+            return None
+        if t < r.cross[0] and self._went(r) > self.start + 10.0:
+            return "PIT"
+        if r.cross[-1] >= self.chequer - 0.5 or len(r.cross) >= self.total_laps:
+            return "FIN"
+        return "OUT"
+
+    def staging(self, t: float) -> bool:
+        """Whether the field is lined up on the grid at time t: from when I
+        stopped on the grid until the start."""
+        if t >= self.start:
+            return False
+        if not hasattr(self, "_staged_at"):
+            tt, v = self.tel.t, self.tel.speed_kmh
+            m = np.flatnonzero((tt < self.start) & (v > 6))
+            self._staged_at = float(tt[m[-1]]) if len(m) else self.start - 60
+            self._staged_at = max(self._staged_at, self.start - 300)
+        return t >= self._staged_at
+
+    def grid_slots(self) -> list[tuple[str, int]]:
+        """(number, grid slot) for everyone with a known grid position, me included."""
+        return [(r.number, r.grid) for r in self.riders if r.grid]
 
     @property
     def classes(self) -> list[str]:
@@ -437,10 +482,8 @@ class Race:
             return []
         out = []
         for r in self.riders:
-            if r is self.me or (cls and r.cls != cls) or t >= r.cross[-1]:
+            if r is self.me or (cls and r.cls != cls) or not self.on_track(r, t):
                 continue
-            if r.cross[0] - (r.lap_times[0] if np.isfinite(r.lap_times[0]) else 0) > t:
-                continue                       # not out on track yet
             pr = self.progress(r, t)
             out.append((r.number, pr - math.floor(pr)))
         return out

@@ -693,7 +693,9 @@ class StyleMixin:
         self.text(d, num_r, base, r["number"], 19 if style != "arcade" else 14, num_col, "r")
         nsize, gsize = (16, 15) if style != "arcade" else (12, 11)
         gap_txt, gs = None, gsize
-        if r["lapped"]:
+        if r.get("tag") and not me:              # no dot on the map: say why
+            gap_txt, gs = r["tag"], gsize - 2
+        elif r["lapped"]:
             gap_txt, gs = ("+1 LAP" if style != "arcade" else "+1L"), gsize - 1
         elif r["gap"] is not None and i > 0:
             gap_txt = f"+{r['gap']:.1f}"

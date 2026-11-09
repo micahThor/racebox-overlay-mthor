@@ -211,7 +211,11 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
             ghost = own_ref(timing, ghost["ref"], ghost["offset"], ghost["duration"],
                             ghost.get("video", ""), ghost.get("fps", 30.0)) if ghost.get("ref") is not None else None
         self.ghost = ghost
-        self.tel, self.timing = tel, timing
+        # timing_all: every RaceBox lap (the ghost's lap numbers refer to these).
+        # timing: what the lap timer shows; in race mode only the race laps, so the
+        # warm-up lap and the wait on the grid aren't timed or counted.
+        self.tel, self.timing_all = tel, timing
+        self.timing = race.timing if race is not None else timing
         self.W, self.H = width, height
         self.ss = max(1, int(supersample))
         # Strips: the frame around the video. Left, right, top and bottom strips
@@ -896,6 +900,7 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
             line = list(zip(*self._map_xform(x[m], y[m])))
             dd = self.timing.dist[m] - self.timing.dist[m][0]           # for placing the field
             self._lap_path = (dd / max(dd[-1], 1e-6), x[m], y[m])
+            self._lap_len = float(max(dd[-1], 1.0))
             if self.theme.get("map_glow", True):        # soft glow under the racing line
                 layer = Image.new("RGBA", img.size, tuple(self.C["line"][:3]) + (0,))
                 ImageDraw.Draw(layer).line(line, fill=tuple(self.C["line"][:3]) + (110,),
@@ -1196,7 +1201,7 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
         g = self.ghost
         if not g:
             return GhostState(False)
-        return ghost_state(self.timing, g, t)
+        return ghost_state(self.timing_all, g, t)
 
     def ghost_slot(self) -> tuple[int, int, int, int] | None:
         """(x, y, w, h) of the ghost video inside the atlas, output pixels."""
@@ -1322,12 +1327,88 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
             self._heading = heading
         if self.race is not None and self.race_field and getattr(self, "_lap_path", None) is not None:
             self._map_panel = p
-            fr, bx, by = self._lap_path
-            for num, f in self.race.field(t, self.race_cls):
-                fx, fy = self._map_xform(float(np.interp(f, fr, bx)), float(np.interp(f, fr, by)))
+            if self.race.staging(t):                # lined up on the grid before the start
+                spots = self._grid_spots(x, y)
+            else:
+                spots = self.race.field(t, self.race_cls)
+            for num, fx, fy in self._spread(spots, px, py):
                 self.field_dot(d, fx, fy, num, self.race.rider(num).cls)
             self.you_ring(d, px, py)
         self.draw_marker(img, d, p, px, py, heading, getattr(self, "_facing", True))
+
+    def _path_point(self, f: float, side_m: float = 0.0):
+        """Map position (internal px) a fraction f round the lap, side_m metres
+        to the left of the line."""
+        fr, bx, by = self._lap_path
+        f = f % 1.0
+        x, y = float(np.interp(f, fr, bx)), float(np.interp(f, fr, by))
+        if side_m:
+            e = 2.0 / self._lap_len
+            tx = float(np.interp((f + e) % 1, fr, bx)) - float(np.interp((f - e) % 1, fr, bx))
+            ty = float(np.interp((f + e) % 1, fr, by)) - float(np.interp((f - e) % 1, fr, by))
+            n = math.hypot(tx, ty) or 1.0
+            x, y = x - ty / n * side_m, y + tx / n * side_m
+        return self._map_xform(x, y)
+
+    def _grid_spots(self, x: float, y: float) -> list[tuple[str, float]]:
+        """(number, lap fraction) for the field on the grid, placed from where I'm
+        sitting: everyone else by grid slot, rows of two, a few metres apart."""
+        fr, bx, by = self._lap_path
+        f_me = float(fr[int(np.argmin((bx - x) ** 2 + (by - y) ** 2))])
+        g_me = self.race.me.grid or 1
+        out = []
+        for num, g in self.race.grid_slots():
+            if num == self.race.me.number or (self.race_cls and self.race.rider(num).cls != self.race_cls):
+                continue
+            rows = (g - 1) // 2 - (g_me - 1) // 2
+            out.append((num, f_me - rows * 6.0 / self._lap_len))
+        return out
+
+    def _spread(self, spots, px: float, py: float):
+        """Map positions for the field's tags, nudged sideways off the track
+        where riders are nose to tail, so every number stays readable (and off
+        my own marker)."""
+        S = self.S
+        rt = S(11)                                  # a tag's half-size
+        taken = [(px, py, S(29))]                   # my marker and its ring
+        step = 2 * rt / max(self._map_px_per_m(), 1e-6)     # one tag's width, in metres
+        out = []
+        cands = [(0, 0)] + [c for k in (1, 2, 3, 4, 5)
+                            for c in ((0, k), (0, -k), (k, 0), (-k, 0), (k, k), (-k, -k), (k, -k), (-k, k))]
+        for num, f in spots:
+            rt = max(self.measure(num, 12) + S(9), S(18)) / 2 + S(1)     # this tag's half-width
+            best, best_room = None, -1e9
+            for along, side in cands:                    # along the track, and to either side
+                cx, cy = self._clamp_tag(*self._path_point(f + along * step / self._lap_len, side * step))
+                room = min(math.hypot(cx - ax, cy - ay) - rt - ar for ax, ay, ar in taken)
+                if room >= 0:
+                    best = (cx, cy)
+                    break
+                if room > best_room:
+                    best, best_room = (cx, cy), room
+            taken.append((best[0], best[1], rt))
+            out.append((num, best[0], best[1]))
+        return out
+
+    def _clamp_tag(self, x: float, y: float):
+        """Keep a tag inside the map's card (as field_dot does), so spreading
+        them out accounts for where they'll really be drawn."""
+        p_ = getattr(self, "_map_panel", None)
+        if p_ is None:
+            return x, y
+        S = self.S
+        return (min(max(x, S(18)), p_.iw - S(18)),
+                min(max(y, p_.iay + S(13)), p_.iay + p_.ih - S(13)))
+
+    def _map_px_per_m(self) -> float:
+        if getattr(self, "_ppm", None) is None:
+            fr, bx, by = self._lap_path
+            a = self._map_xform(float(bx[0]), float(by[0]))
+            i = len(bx) // 4
+            b = self._map_xform(float(bx[i]), float(by[i]))
+            dm = math.hypot(float(bx[i] - bx[0]), float(by[i] - by[0])) or 1.0
+            self._ppm = math.hypot(b[0] - a[0], b[1] - a[1]) / dm
+        return self._ppm
 
     def _draw_speed(self, img, d, p, t, st):
         if self.gauge != "arc" and self.draw_speed_styled(img, d, p, t, st):
