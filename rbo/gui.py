@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -525,8 +526,16 @@ class Studio:
                         frame_color=self.proj.get("frame_color"),
                         strip_align=self.proj.get("strip_align") or {}, results=self.results())
 
+                last = [-1]
+
                 def prog(i, n, rate):
                     self.render_state.update(done=i, total=n, fps=rate, stage="frames")
+                    pct = int(i / n * 20) * 5 if n else 0              # and a line in the Terminal every 5%
+                    if pct != last[0]:
+                        last[0] = pct
+                        eta = (n - i) / rate / 60 if rate else 0
+                        print(f"  rendering: {pct:3d}%  frame {i}/{n}  {rate:4.1f} fps  "
+                              f"about {eta:.0f} min left", flush=True)
 
                 off = self.t0 + float(self.proj["offset"])
                 s0, s1 = start or 0.0, end or self.vinfo["duration"]
@@ -552,6 +561,11 @@ class Studio:
 
         threading.Thread(target=work, daemon=True).start()
         return self.render_state
+
+    def render_marker(self) -> str:
+        """Changes whenever the render's progress does."""
+        st = self.render_state
+        return f"{st.get('state')}|{st.get('stage')}|{st.get('done')}"
 
     def cancel_render(self) -> dict:
         if self._cancel:
@@ -743,7 +757,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
             elif u.path == "/api/render":
-                self._json(self.studio.render_state)
+                # ?wait=1&since=N: hold the answer (up to 5 s) until the render moves
+                # on, so the page keeps up without timers, which browsers slow
+                # right down in a tab that's in the background
+                if q.get("wait"):
+                    since = q.get("since", [""])[0]
+                    stop = time.time() + 5
+                    while time.time() < stop and self.studio.render_marker() == since:
+                        time.sleep(0.25)
+                self._json(dict(self.studio.render_state, marker=self.studio.render_marker()))
             elif u.path == "/api/calls":
                 self._json(self.studio.calls())
             elif u.path == "/api/call-audio":

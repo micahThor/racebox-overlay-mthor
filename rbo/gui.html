@@ -1394,12 +1394,33 @@ $("#trimClear").addEventListener("click", () => { $("#rStart").value = ""; $("#r
 ["#rStart", "#rEnd"].forEach(id => $(id).addEventListener("change", trimChanged));
 
 /* ---------- render ---------- */
-let polling = null;
 $("#renderBtn").addEventListener("click", async () => {
   const st = $("#renderBtn").dataset.running ? await api("/api/render/cancel", {}) :
     await api("/api/render", { start: parseClock($("#rStart").value), end: parseClock($("#rEnd").value) });
   showRender(st);
-  if (!polling) polling = setInterval(async () => showRender(await api("/api/render")), 700);
+  followRender();
+});
+/* follow a render with long polls: the server answers when it moves on, so
+   this keeps going in a background tab (where browsers slow timers down to
+   about once a minute) */
+let following = false;
+async function followRender() {
+  if (following) return;
+  following = true;
+  let marker = "";
+  try {
+    while (true) {
+      const st = await api(`/api/render?wait=1&since=${encodeURIComponent(marker)}`);
+      marker = st.marker || "";
+      showRender(st);
+      if (st.state !== "running") break;
+    }
+  } catch (e) {
+    $("#rstatus").textContent = "Lost touch with the editor: " + e.message;
+  } finally { following = false; }
+}
+document.addEventListener("visibilitychange", async () => {
+  if (!document.hidden) showRender(await api("/api/render"));
 });
 function showRender(st) {
   const btn = $("#renderBtn"), bar = $("#rbar"), status = $("#rstatus");
@@ -1419,7 +1440,9 @@ function showRender(st) {
     (st.calls !== undefined ? ` with ${st.calls} crew chief calls` : "");
   else if (st.state === "error") status.textContent = st.error;
   else status.textContent = "";
-  if (!running && polling) { clearInterval(polling); polling = null; }
+  // the tab's title shows it too, so it's visible from another tab or app
+  document.title = running && st.total ? `${Math.floor(pct)}% rendering · RaceBox Overlay`
+    : st.state === "done" ? "Rendered · RaceBox Overlay" : "RaceBox Overlay Editor";
 }
 
 /* ---------- opening files ---------- */
@@ -1514,7 +1537,7 @@ async function pickInto(kind, input, other) {
     if (P.trim.end != null) $("#rEnd").value = fmt(P.trim.end);
   }
   renderTrim();
-  showRender(await api("/api/render"));
+  { const st0 = await api("/api/render"); showRender(st0); if (st0.state === "running") followRender(); }
   refreshHud();
 })();
 </script>
