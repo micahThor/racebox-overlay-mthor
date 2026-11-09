@@ -377,9 +377,9 @@ timed, counted, used as a best or called by the crew chief (laps are numbered
 from the start, like Speedhive's). The editor's Sync tab still lists it, for
 lining up.
 
-On the map, every rider who's on track has a tag; when riders are nose to
-tail the tags are nudged apart (along the track and to either side) so every
-number can be read, and none hide under your own marker. While the field is
+On the map, every rider who's on track has a tag at their spot on the track.
+When riders are nose to tail and their tags overlap, the one ahead in the
+race is on top (your own marker is always on top). While the field is
 lined up on the grid before the start, everyone is shown in grid order around
 your spot (rows of two). A rider in the standings with no tag on the map says
 why in place of the gap: **NO TIME** (Speedhive has no lap times for them),

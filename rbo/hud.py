@@ -1331,7 +1331,11 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
                 spots = self._grid_spots(x, y)
             else:
                 spots = self.race.field(t, self.race_cls)
-            for num, fx, fy in self._spread(spots, px, py):
+            # where tags overlap, the rider ahead in the race goes on top:
+            # draw from the back of the field forwards
+            order = {n: i for i, n in enumerate(self.race.order_at(t))}
+            for num, f in sorted(spots, key=lambda sp: -order.get(sp[0], 999)):
+                fx, fy = self._path_point(f)
                 self.field_dot(d, fx, fy, num, self.race.rider(num).cls)
             self.you_ring(d, px, py)
         self.draw_marker(img, d, p, px, py, heading, getattr(self, "_facing", True))
@@ -1363,52 +1367,6 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
             rows = (g - 1) // 2 - (g_me - 1) // 2
             out.append((num, f_me - rows * 6.0 / self._lap_len))
         return out
-
-    def _spread(self, spots, px: float, py: float):
-        """Map positions for the field's tags, nudged sideways off the track
-        where riders are nose to tail, so every number stays readable (and off
-        my own marker)."""
-        S = self.S
-        rt = S(11)                                  # a tag's half-size
-        taken = [(px, py, S(29))]                   # my marker and its ring
-        step = 2 * rt / max(self._map_px_per_m(), 1e-6)     # one tag's width, in metres
-        out = []
-        cands = [(0, 0)] + [c for k in (1, 2, 3, 4, 5)
-                            for c in ((0, k), (0, -k), (k, 0), (-k, 0), (k, k), (-k, -k), (k, -k), (-k, k))]
-        for num, f in spots:
-            rt = max(self.measure(num, 12) + S(9), S(18)) / 2 + S(1)     # this tag's half-width
-            best, best_room = None, -1e9
-            for along, side in cands:                    # along the track, and to either side
-                cx, cy = self._clamp_tag(*self._path_point(f + along * step / self._lap_len, side * step))
-                room = min(math.hypot(cx - ax, cy - ay) - rt - ar for ax, ay, ar in taken)
-                if room >= 0:
-                    best = (cx, cy)
-                    break
-                if room > best_room:
-                    best, best_room = (cx, cy), room
-            taken.append((best[0], best[1], rt))
-            out.append((num, best[0], best[1]))
-        return out
-
-    def _clamp_tag(self, x: float, y: float):
-        """Keep a tag inside the map's card (as field_dot does), so spreading
-        them out accounts for where they'll really be drawn."""
-        p_ = getattr(self, "_map_panel", None)
-        if p_ is None:
-            return x, y
-        S = self.S
-        return (min(max(x, S(18)), p_.iw - S(18)),
-                min(max(y, p_.iay + S(13)), p_.iay + p_.ih - S(13)))
-
-    def _map_px_per_m(self) -> float:
-        if getattr(self, "_ppm", None) is None:
-            fr, bx, by = self._lap_path
-            a = self._map_xform(float(bx[0]), float(by[0]))
-            i = len(bx) // 4
-            b = self._map_xform(float(bx[i]), float(by[i]))
-            dm = math.hypot(float(bx[i] - bx[0]), float(by[i] - by[0])) or 1.0
-            self._ppm = math.hypot(b[0] - a[0], b[1] - a[1]) / dm
-        return self._ppm
 
     def _draw_speed(self, img, d, p, t, st):
         if self.gauge != "arc" and self.draw_speed_styled(img, d, p, t, st):
