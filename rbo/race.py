@@ -127,10 +127,17 @@ class Race:
         self.tm, self.tel = timing, timing.tel
         rows = {int(r["position"]): r for r in data["classification"]["rows"]}
         self.riders: list[Rider] = []
+        # Riders in the results with no lap times (a transponder that didn't
+        # read, say): they can't be placed lap by lap, so they're kept at their
+        # official finishing place in the running order (see order_at), with no
+        # dot on the map.
+        self.untimed: list[Rider] = []
+        timed = set()
         for c in data["alllaptimes"]:
             r = rows.get(int(c["position"]))
             if r is None or not c.get("laps"):
                 continue
+            timed.add(int(c["position"]))
             laps = sorted(c["laps"], key=lambda l: l["lap"])
             self.riders.append(Rider(
                 number=str(r.get("startNumber", "")).strip(), name=_clean(r.get("name")),
@@ -141,6 +148,12 @@ class Race:
                 lead_laps=[int(l.get("leadLap") or l["lap"]) for l in laps]))
         if not self.riders:
             raise RaceError("no lap times in this Speedhive session")
+        for pos, r in sorted(rows.items()):
+            if pos not in timed:
+                self.untimed.append(Rider(
+                    number=str(r.get("startNumber", "")).strip(), name=_clean(r.get("name")),
+                    cls=_clean(r.get("resultClass")), finish_pos=pos, class_pos=r.get("positionInClass"),
+                    raw=np.array([]), lap_times=[], lead_laps=[], cross=np.array([])))
         grid = data.get("lapchart", {}).get("positionRows") or []
         for i, row in enumerate(grid):
             if row and isinstance(row[0], dict):
@@ -163,7 +176,15 @@ class Race:
 
     def rider(self, number: str) -> Rider | None:
         n = str(number).strip().lower()
-        return next((r for r in self.riders if r.number.lower() == n), None)
+        return next((r for r in self.riders + self.untimed if r.number.lower() == n), None)
+
+    @property
+    def all_riders(self) -> list[Rider]:
+        """Everyone in the results, timed or not."""
+        return self.riders + self.untimed
+
+    def is_timed(self, number: str) -> bool:
+        return not any(r.number == number for r in self.untimed)
 
     # ------------------------------------------------------------ aligning clocks
 
@@ -286,8 +307,18 @@ class Race:
         self.events = self._events()
 
     def order_at(self, t: float) -> list[str]:
+        """Running order at time t: everyone with lap times as estimated, and
+        anyone without kept at their official finishing place."""
         i = int(np.clip((t - self.times[0]) / STEP, 0, len(self.times) - 1))
-        return self.orders[i]
+        return self._with_untimed(self.orders[i])
+
+    def _with_untimed(self, order: list[str]) -> list[str]:
+        if not self.untimed:
+            return order
+        out = list(order)
+        for r in self.untimed:                       # in finishing order
+            out.insert(min(r.finish_pos - 1, len(out)), r.number)
+        return out
 
     def pos(self, number: str, t: float, cls: str | None = None) -> int:
         order = self.order_at(t)
@@ -302,12 +333,13 @@ class Race:
         ev = [Event(self.start, "start", {"grid": self.me.grid})]
         for t, before, after in self.changes:
             b, a = before.index(me), after.index(me)
+            p_now = self._with_untimed(after).index(me) + 1
             if a < b:
                 passed = [n for n in before[a:b] if after.index(n) > a]
-                ev.append(Event(t, "gain", {"pos": a + 1, "passed": passed}))
+                ev.append(Event(t, "gain", {"pos": p_now, "passed": passed}))
             elif a > b:
                 by = [n for n in after[b:a] if before.index(n) > b]
-                ev.append(Event(t, "lose", {"pos": a + 1, "by": by}))
+                ev.append(Event(t, "lose", {"pos": p_now, "by": by}))
         leader = min(self.riders, key=lambda r: r.finish_pos)
         ev.append(Event(float(leader.cross[-1]), "chequered", {"leader": leader.number}))
         all_laps = []      # (time, lap time) for every lap of every rider, for "fastest lap"
@@ -392,7 +424,7 @@ class Race:
     def classes(self) -> list[str]:
         """Classes in this race, in the order their best rider finished."""
         out = []
-        for r in sorted(self.riders, key=lambda r: r.finish_pos):
+        for r in sorted(self.all_riders, key=lambda r: r.finish_pos):
             if r.cls not in out:
                 out.append(r.cls)
         return out
@@ -476,14 +508,16 @@ class Race:
         return {i for i, x in enumerate(self.clean_laps(within)) if x >= 0.15}
 
     def laps_down(self, r: Rider, t: float) -> int:
-        lead = self.rider(self.order_at(t)[0])
+        if not len(r.cross):
+            return 0
+        lead = next(self.rider(n) for n in self.order_at(t) if self.is_timed(n))
         if t < self.start or lead is r:
             return 0
         return int(self.progress(lead, t) - self.progress(r, t))
 
     def summary(self) -> str:
         me = self.me
-        lines = [f"{len(self.riders)} riders, {self.total_laps} laps; you: #{me.number} {me.name} "
+        lines = [f"{len(self.all_riders)} riders, {self.total_laps} laps; you: #{me.number} {me.name} "
                  f"({me.cls}), started P{me.grid or '?'}, finished P{me.finish_pos}",
                  f"lined up with your RaceBox laps: {self.aligned_laps} crossings matched, "
                  f"within {self.align_error:.2f} s"]
@@ -493,6 +527,10 @@ class Race:
                 names = ", ".join(f"#{n} {self.rider(n).last_name}" for n in who)
                 verb = "passed" if e.kind == "gain" else "passed by"
                 lines.append(f"  {e.t - self.start:6.1f}s into the race: {verb} {names} -> P{e.data['pos']}")
+        if self.untimed:
+            lines.insert(1, "no lap times from Speedhive for " + ", ".join(
+                f"#{r.number} {r.last_name} (P{r.finish_pos})" for r in self.untimed)
+                + ": kept at their finishing place in the standings, not shown on the map")
         return "\n".join(lines)
 
 
@@ -541,8 +579,8 @@ def race_calls(race: Race, on: set[str] | None = None, units: str = "mph",
         ta = max(race.launch() + 1.5, te - 3.5)
         now = race.order_at(ta)
         mine = lambda order: order.index(me.number)
-        passed = [n for n in grid[:mine(grid)] if now.index(n) > mine(now)]
-        lost = [n for n in grid[mine(grid) + 1:] if now.index(n) < mine(now)]
+        passed = [n for n in grid[:mine(grid)] if now.index(n) > mine(now) and race.is_timed(n)]
+        lost = [n for n in grid[mine(grid) + 1:] if now.index(n) < mine(now) and race.is_timed(n)]
         p = mine(now) + 1
         if passed and lost:
             txt = f"Past {joined(passed)}, but {joined(lost)} got you."
@@ -554,8 +592,8 @@ def race_calls(race: Race, on: set[str] | None = None, units: str = "mph",
             txt = "Clean launch."
         out.append(Call(ta, f"{txt} {P(p)} into turn one.", "racepos", 1))
         after = race.order_at(t_out)
-        got = [n for n in now[:mine(now)] if after.index(n) > mine(after)]
-        gone = [n for n in now[mine(now) + 1:] if after.index(n) < mine(after)]
+        got = [n for n in now[:mine(now)] if after.index(n) > mine(after) and race.is_timed(n)]
+        gone = [n for n in now[mine(now) + 1:] if after.index(n) < mine(after) and race.is_timed(n)]
         p2 = mine(after) + 1
         bits = []
         if got:

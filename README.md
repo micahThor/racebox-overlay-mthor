@@ -371,6 +371,12 @@ To try it without a race of your own: `python tools/make_race_sample.py sample/`
 makes a RaceBox session with the lap times of #96 in Speedhive session
 12935135.
 
+Riders in the official results with no lap times (Speedhive sometimes has
+none for a rider whose transponder didn't read, even the winner) are still
+in the standings, kept at their official finishing place for the whole race
+with no gap shown; they can't be put on the map. The Race tab's summary
+lists them.
+
 ### Qualifying and heat results at the start
 
 A race day runs qualifying, then heat races, then the main. In the Race tab,

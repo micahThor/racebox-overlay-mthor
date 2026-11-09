@@ -634,7 +634,7 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
             self.ghost_slot_ref = ((gw - fit) / 2, 8 + (avail_h - fit * a) / 2, fit, fit * a)
             specs.append(("ghost", "ghost", gw, gh, "tc" if not portrait else "tr", self._draw_ghost))
         if self.race is not None:
-            n = len([r for r in self.race.riders if not self.race_cls or r.cls == self.race_cls])
+            n = len([r for r in self.race.all_riders if not self.race_cls or r.cls == self.race_cls])
             self.race_rows = min(n, RACE_ROWS)
             self.race_key_h = 14 if self.multi_class() else 0       # the class colour key under the header
             self.combined = "map" not in self.hide and "race" not in self.hide
