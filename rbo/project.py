@@ -50,6 +50,7 @@ still win over anything in the file.
 from __future__ import annotations
 
 import json
+import contextvars
 from pathlib import Path
 
 DEFAULTS = {"offset": None, "theme": "carbon", "units": "mph", "scale": 1.0,
@@ -132,20 +133,27 @@ PRESET_KEYS = ("theme", "units", "scale", "speed_max", "layout", "strip_size", "
 PRESET_INFO = ("event", "event_logo", "track_logo")
 PRESET_DIR = Path.home() / ".racebox-overlay" / "layouts"
 _DEFAULT_FILE = "_default.json"
+# the web version keeps each person's layouts in their own folder: it sets this
+# for the request being handled (each request runs in its own thread)
+preset_dir_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar("preset_dir", default=None)
+
+
+def _pdir() -> Path:
+    return preset_dir_var.get() or PRESET_DIR
 
 
 def _preset_path(name: str) -> Path:
     slug = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name.strip()).strip()
     if not slug or slug.startswith("_"):
         raise ValueError("give the layout a name")
-    return PRESET_DIR / f"{slug[:80]}.json"
+    return _pdir() / f"{slug[:80]}.json"
 
 
 def list_presets() -> list[dict]:
     """Saved layouts, newest first: [{"name", "theme", "saved"}]."""
     out = []
-    if PRESET_DIR.is_dir():
-        for f in PRESET_DIR.glob("*.json"):
+    if _pdir().is_dir():
+        for f in _pdir().glob("*.json"):
             if f.name == _DEFAULT_FILE:
                 continue
             try:
@@ -197,12 +205,12 @@ def apply_preset(proj: dict, settings: dict) -> dict:
 def default_preset() -> str | None:
     """The saved layout new videos start from, if one is chosen."""
     try:
-        name = json.loads((PRESET_DIR / _DEFAULT_FILE).read_text()).get("name")
+        name = json.loads((_pdir() / _DEFAULT_FILE).read_text()).get("name")
     except (OSError, json.JSONDecodeError, AttributeError):
         return None
     return name if name and _preset_path(name).exists() else None
 
 
 def set_default_preset(name: str | None) -> None:
-    PRESET_DIR.mkdir(parents=True, exist_ok=True)
-    (PRESET_DIR / _DEFAULT_FILE).write_text(json.dumps({"name": name}) + "\n")
+    _pdir().mkdir(parents=True, exist_ok=True)
+    (_pdir() / _DEFAULT_FILE).write_text(json.dumps({"name": name}) + "\n")

@@ -35,6 +35,7 @@ from .themes import THEMES, load_theme
 from .timing import fmt_time
 
 HERE = Path(__file__).parent
+RENDER_SLOT: threading.Semaphore | None = None      # the web version: one render at a time
 
 
 class Studio:
@@ -53,6 +54,8 @@ class Studio:
         self._huds: dict[str, Hud] = {}
         self.render_state: dict = {"state": "idle"}
         self._cancel: threading.Event | None = None
+        self.autosync_state: dict = {"state": "idle"}
+        self.last_used = time.time()
         if self.proj.get("offset") is None:
             self.proj["offset"] = self._clock_guess()
             self.offset_source = "camera clock" if self.proj["offset"] else "none yet"
@@ -505,6 +508,22 @@ class Studio:
                 "method": r.method,
                 "alternatives": [{"offset": round(o - self.t0, 3), "score": s} for o, s in r.alternatives]}
 
+    def start_autosync(self) -> dict:
+        """Auto-sync in the background (it can take a few minutes, longer than
+        a web request may stay open); poll autosync_state for the answer."""
+        if self.autosync_state.get("state") == "running":
+            return self.autosync_state
+        self.autosync_state = {"state": "running"}
+
+        def work():
+            try:
+                r = self.auto_sync()
+            except Exception as e:  # noqa: BLE001 - surfaced to the UI
+                r = {"ok": False, "error": str(e)}
+            self.autosync_state = dict(r, state="done")
+        threading.Thread(target=work, daemon=True).start()
+        return self.autosync_state
+
     # ------------------------------------------------------------ rendering
 
     def start_render(self, start: float | None, end: float | None) -> dict:
@@ -512,10 +531,20 @@ class Studio:
             return self.render_state
         out = str(Path(self.video_path).with_name(Path(self.video_path).stem + "_overlay.mp4"))
         self._cancel = threading.Event()
-        self.render_state = {"state": "running", "done": 0, "total": 0, "fps": 0, "out": out}
+        self.render_state = {"state": "running", "done": 0, "total": 0, "fps": 0, "out": out,
+                             "name": Path(out).name}
 
         def work():
+            slot = RENDER_SLOT
             try:
+                if slot is not None:          # the web version renders one video at a time
+                    while not slot.acquire(timeout=1):
+                        self.render_state.update(stage="queued")
+                        if self._cancel.is_set():
+                            self.render_state.update(state="cancelled", stage=None)
+                            slot = None
+                            return
+                    self.render_state.update(stage=None)
                 h = Hud(self.tel, self.tm, self.vinfo["width"], self.vinfo["height"],
                         units=self.proj.get("units") or "mph", scale=float(self.proj.get("scale") or 1),
                         theme=self.proj.get("theme"), layout=self.proj.get("layout") or {},
@@ -555,12 +584,23 @@ class Studio:
                     self.render_state["calls"] = len(placed)
                 video.render(self.video_path, h, off, out, s0, end, progress=prog,
                              cancel=self._cancel, radio=radio)
-                self.render_state["state"] = "done"
+                if self._cancel.is_set():
+                    self.render_state.update(state="cancelled", stage=None)
+                    return
+                if self.after_render:                # the web version: keep it for downloading
+                    self.render_state.update(stage="saving")
+                    self.render_state.update(self.after_render(out) or {})
+                self.render_state.update(state="done", stage=None)
             except Exception as e:  # noqa: BLE001 - surfaced to the UI
                 self.render_state.update(state="error", error=str(e))
+            finally:
+                if slot is not None:
+                    slot.release()
 
         threading.Thread(target=work, daemon=True).start()
         return self.render_state
+
+    after_render = None          # set by the web version: called with the finished file
 
     def render_marker(self) -> str:
         """Changes whenever the render's progress does."""
@@ -682,9 +722,31 @@ def open_files(video_path: str, session_path: str | None) -> Studio:
 
 class Handler(BaseHTTPRequestHandler):
     studio: Studio | None = None
+    page_config = "null"          # the web version tells the page about itself here
 
     def log_message(self, *a):
         pass
+
+    # the web version overrides these: one open video per person, files in their folder
+    def set_studio(self, st: Studio) -> None:
+        Handler.studio = st
+
+    def recent_list(self) -> list[dict]:
+        return recent()
+
+    def open_studio(self, video_path: str, session_path: str | None) -> Studio:
+        return open_files(video_path, session_path)
+
+    def peek(self, video_path: str) -> dict:
+        v = Path(str(video_path).strip()).expanduser()
+        sess = project.load(v).get("session") if v.exists() else None
+        return {"session": sess if sess and Path(sess).exists() else None}
+
+    def check_project(self, changes: dict) -> dict:
+        return changes
+
+    def check_path(self, path: str) -> str:
+        return path
 
     def _json(self, obj, status=HTTPStatus.OK):
         body = json.dumps(obj).encode()
@@ -704,7 +766,8 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         try:
             if u.path == "/":
-                body = (HERE / "gui.html").read_bytes()
+                body = (HERE / "gui.html").read_text().replace(
+                    "/*RBO_CONFIG*/null", self.page_config).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -719,10 +782,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_error(404)
             elif u.path == "/api/ghost-laps":
-                self._json(self.studio.ghost_laps(q.get("session", [""])[0]))
+                self._json(self.studio.ghost_laps(self.check_path(q.get("session", [""])[0])))
             elif u.path == "/api/state":
                 st = self.studio.state() if self.studio else {"needs_files": True}
-                st["recent"] = recent()
+                st["recent"] = self.recent_list()
                 self._json(st)
             elif self.studio is None and u.path.startswith(("/api/", "/video", "/ghost-video")):
                 self._json({"error": "no video open yet"}, HTTPStatus.CONFLICT)
@@ -766,6 +829,11 @@ class Handler(BaseHTTPRequestHandler):
                     while time.time() < stop and self.studio.render_marker() == since:
                         time.sleep(0.25)
                 self._json(dict(self.studio.render_state, marker=self.studio.render_marker()))
+            elif u.path == "/api/autosync":     # ?wait=1: hold the answer (up to 20 s) until it's done
+                stop = time.time() + (20 if q.get("wait") else 0)
+                while time.time() < stop and self.studio.autosync_state.get("state") == "running":
+                    time.sleep(0.25)
+                self._json(self.studio.autosync_state)
             elif u.path == "/api/calls":
                 self._json(self.studio.calls())
             elif u.path == "/api/call-audio":
@@ -797,25 +865,23 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if self.studio and self.studio.render_state.get("state") == "running":
                         raise ValueError("wait for the render to finish (or cancel it) before opening other files")
-                    Handler.studio = open_files(b["video"], b.get("session"))
+                    self.set_studio(self.open_studio(b["video"], b.get("session")))
                     self._json({"ok": True})
                 except Exception as e:  # noqa: BLE001 - shown in the open screen
                     self._json({"ok": False, "error": str(e)})
                 return
             if u.path == "/api/peek":           # what's saved for a video, before opening it
-                v = Path(str(b.get("video", "")).strip()).expanduser()
-                sess = project.load(v).get("session") if v.exists() else None
-                self._json({"session": sess if sess and Path(sess).exists() else None})
+                self._json(self.peek(str(b.get("video", ""))))
                 return
             if s is None:
                 self._json({"error": "no video open yet"}, HTTPStatus.CONFLICT)
                 return
             if u.path == "/api/project":
-                self._json(s.update_project(b))
+                self._json(s.update_project(self.check_project(b)))
             elif u.path == "/api/sync-lap":
                 self._json(s.sync_lap(int(b["lap"]), float(b["vt"])))
             elif u.path == "/api/autosync":
-                self._json(s.auto_sync())
+                self._json(s.start_autosync())
             elif u.path == "/api/render":
                 self._json(s.start_render(b.get("start"), b.get("end")))
             elif u.path == "/api/render/cancel":
@@ -827,7 +893,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
 
-    def _send_video(self, path: str | None = None):
+    def _send_video(self, path: str | None = None, attachment: str | None = None):
         path = path or self.studio.video_path
         size = Path(path).stat().st_size
         ctype = mimetypes.guess_type(path)[0] or "video/mp4"
@@ -854,6 +920,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", ctype)
+        if attachment:
+            self.send_header("Content-Disposition", f'attachment; filename="{attachment}"')
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(end - start + 1))
         self.end_headers()

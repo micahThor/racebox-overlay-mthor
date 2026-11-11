@@ -59,6 +59,17 @@ header .files { color: var(--muted); font-size: 14px; }
 .openbox .link { background: none; border: 0; color: var(--muted); text-decoration: underline; }
 .recent { list-style: none; margin: 0; padding: 0; }
 .recent li button { width: 100%; text-align: left; display: block; margin: 4px 0; padding: 8px 10px; }
+.recent li { display: flex; gap: 6px; align-items: center; }
+.recent li button.rm { width: auto; flex: none; color: var(--muted); }
+.who { margin-left: 12px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.who a { color: inherit; margin-left: 6px; }
+input.ro { cursor: default; }
+a.dl { color: var(--accent, #4aa3ff); font-weight: 600; }
+.uptoast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100;
+  background: #1d2228; color: #fff; border: 1px solid #3a424c; border-radius: 8px; padding: 10px 14px;
+  min-width: min(420px, 90vw); box-shadow: 0 6px 24px rgba(0,0,0,.4); font-size: 13px; }
+.uptoast .bar { height: 4px; background: #333a42; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.uptoast .bar > div { height: 100%; width: 0; background: #4aa3ff; }
 .recent small { display: block; color: var(--muted); font-size: 12px; word-break: break-all; }
 header .saved { margin-left: auto; color: var(--muted); font-size: 13px; }
 header .saved.ok::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
@@ -230,11 +241,13 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
   <span class="files" id="files">Loading…</span>
   <button id="openBtn" class="hbtn">Open…</button>
   <span class="saved" id="saved"></span>
+  <span class="who" id="who" hidden><span id="whoName"></span> <a href="/logout">Sign out</a></span>
 </header>
+<div class="uptoast" id="upToast" hidden role="status"><span></span><div class="bar"><div></div></div></div>
 <div class="openscreen" id="openScreen" hidden>
   <div class="openbox" role="dialog" aria-labelledby="openTitle">
     <h2 id="openTitle">Open a video</h2>
-    <p class="hint">Choose the video from your camera and the RaceBox file from the same ride.
+    <p class="hint" id="openHint">Choose the video from your camera and the RaceBox file from the same ride.
       Settings you've saved for a video come back when you open it again.</p>
     <label class="olabel" for="oVideo">Video</label>
     <div class="row"><input type="text" id="oVideo" class="path" placeholder="/path/to/VID_20261024_103015.mp4">
@@ -248,7 +261,7 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
       <span class="oerr" id="oErr" role="status"></span>
     </div>
     <div id="oRecentBox">
-      <h2 style="margin-top:22px">Recent</h2>
+      <h2 style="margin-top:22px" id="recentTitle">Recent</h2>
       <ul class="recent" id="oRecent"></ul>
     </div>
   </div>
@@ -509,12 +522,71 @@ const fmt = s => {
 const fmtShort = s => { const m = Math.floor(s / 60); return m + ":" + String(Math.floor(s % 60)).padStart(2, "0"); };
 const parseClock = s => s.trim() === "" ? null : s.split(":").reduce((a, p) => a * 60 + parseFloat(p), 0);
 
+// set when the editor runs as the club's web app ({"email", ...}); null on your own computer
+const WEB = /*RBO_CONFIG*/null;
+const signIn = () => { location.href = "/login"; return new Promise(() => {}); };
+
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} :
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json();
+  if (r.status === 401 && WEB) return signIn();          // signed out: back to the sign-in page
+  let j;
+  try { j = await r.json(); }
+  catch (e) { throw new Error(r.ok ? "the editor sent back something unexpected" : `the editor isn't answering (${r.status}); try again in a minute`); }
   if (j.error) throw new Error(j.error);
   return j;
+}
+
+/* ---------- choosing files: this computer's file picker, or (web app) an upload ---------- */
+const ACCEPT = { video: "video/*,.mp4,.mov,.m4v,.insv", ghost_video: "video/*,.mp4,.mov,.m4v,.insv",
+                 session: ".csv,.vbo", ghost_session: ".csv,.vbo", logo: "image/png,image/jpeg,image/webp" };
+async function choose(kind, dir) {
+  if (!WEB) return api("/api/pick", { kind, dir });
+  const file = await new Promise(res => {
+    const i = document.createElement("input");
+    i.type = "file"; i.accept = ACCEPT[kind] || "";
+    i.addEventListener("change", () => res(i.files[0] || null));
+    i.addEventListener("cancel", () => res(null));
+    i.click();
+  });
+  if (!file) return { cancelled: true };
+  try { return { path: await upload(file, kind) }; }
+  catch (e) { return { error: e.message }; }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// sends the file in pieces; a piece that fails is tried again, and a file
+// that was partly sent before carries on from where it got to
+async function upload(file, kind) {
+  let st = await api("/api/upload/start", { name: file.name, size: file.size, kind });
+  const toast = $("#upToast"), label = toast.querySelector("span"), bar = toast.querySelector(".bar > div");
+  const t0 = performance.now(), from = st.offset;
+  try {
+    while (!st.done) {
+      const pct = st.offset / file.size * 100, secs = (performance.now() - t0) / 1000;
+      const rate = secs > 2 ? (st.offset - from) / secs : 0;
+      label.textContent = `Uploading ${file.name}: ${Math.floor(pct)}%` + (rate
+        ? ` · ${(rate / 1e6).toFixed(1)} MB/s · about ${Math.max(1, Math.ceil((file.size - st.offset) / rate / 60))} min left` : "");
+      bar.style.width = pct + "%";
+      toast.hidden = false;
+      const end = Math.min(st.offset + st.chunk, file.size);
+      for (let tries = 1; ; tries++) {
+        try {
+          const r = await fetch(`/api/upload?name=${encodeURIComponent(st.name)}&offset=${st.offset}`,
+                                { method: "PUT", body: file.slice(st.offset, end) });
+          if (r.status === 401) return signIn();
+          const j = await r.json();
+          if (j.error) throw new Error(j.error);
+          Object.assign(st, j);
+          break;
+        } catch (e) {
+          if (tries >= 6) throw new Error(`the upload stopped (${e.message}); choose the file again to carry on`);
+          label.textContent = `Connection trouble, trying again (${tries})…`;
+          await sleep(1500 * tries);
+        }
+      }
+    }
+  } finally { toast.hidden = true; }
+  return st.name;
 }
 
 /* ---------- overlay sprites ---------- */
@@ -845,7 +917,8 @@ $("#auto").addEventListener("click", async () => {
   btn.disabled = true;
   out.textContent = S.video.has_gyro ? "Matching the camera gyro…" : "Measuring motion in the video. This can take a minute…";
   try {
-    const r = await api("/api/autosync", {});
+    let r = await api("/api/autosync", {});
+    while (r.state === "running") r = await api("/api/autosync?wait=1");
     if (!r.ok) { out.innerHTML = `<span class="warn">${r.error}</span>`; return; }
     P.offset = r.offset; S.offset_source = "auto-sync (" + r.method + ")";
     let html = `Matched at ${r.offset.toFixed(2)} s (match ${r.score.toFixed(2)}).`;
@@ -1159,7 +1232,7 @@ for (const [id, k] of [["#inEvent", "event"], ["#inTrack", "track"], ["#inDate",
 $("#inTrackReset").addEventListener("click", () => saveInfo({ track: undefined }));
 $("#inDateReset").addEventListener("click", () => saveInfo({ date: undefined }));
 document.querySelectorAll("[data-logo]").forEach(b => b.addEventListener("click", async () => {
-  const r = await api("/api/pick", { kind: "logo" });
+  const r = await choose("logo");
   const lbl = b.dataset.logo === "event_logo" ? $("#logoEvent") : $("#logoTrack");
   if (r.path) saveInfo({ [b.dataset.logo]: r.path });
   else if (r.error) { lbl.textContent = r.error; lbl.title = r.error; }
@@ -1455,9 +1528,19 @@ function showRender(st) {
   if (running) {
     const eta = st.fps ? (st.total - st.done) / st.fps : 0;
     status.textContent = st.stage === "voice" ? `Recording crew chief calls, ${st.done} of ${st.total}`
+      : st.stage === "queued" ? "Waiting for someone else's render to finish (one at a time)…"
+      : st.stage === "saving" ? "Saving it for you to download…"
       : st.total ? `Frame ${st.done} of ${st.total}, ${st.fps.toFixed(0)} fps, about ${Math.ceil(eta / 60)} min left` : "Starting…";
-  } else if (st.state === "done") status.textContent = "Rendered " + st.out +
-    (st.calls !== undefined ? ` with ${st.calls} crew chief calls` : "");
+  } else if (st.state === "done") {
+    status.textContent = "Rendered " + (WEB ? st.name : st.out) +
+      (st.calls !== undefined ? ` with ${st.calls} crew chief calls` : "") + (WEB ? ". " : "");
+    if (WEB) {
+      const a = document.createElement("a");
+      a.href = "/api/download"; a.textContent = "Download"; a.className = "dl";
+      status.appendChild(a);
+    }
+  }
+  else if (st.state === "cancelled") status.textContent = "Cancelled.";
   else if (st.state === "error") status.textContent = st.error;
   else status.textContent = "";
   // the tab's title shows it too, so it's visible from another tab or app
@@ -1476,7 +1559,13 @@ function showOpen(rec, cancellable) {
   $("#oRecentBox").style.display = rec && rec.length ? "" : "none";
   for (const r of rec || []) {
     const li = document.createElement("li");
-    li.innerHTML = `<button>${r.name}<small>${r.folder}${r.session ? "" : " · RaceBox file needed"}</small></button>`;
+    li.innerHTML = `<button>${esc(r.name)}<small>${esc(r.folder)}${r.session ? "" : " · RaceBox file needed"}</small></button>`
+      + (WEB ? `<button class="link rm" title="Delete this video and its settings from the server">Delete</button>` : "");
+    if (WEB) li.querySelector(".rm").addEventListener("click", async () => {
+      if (!confirm(`Delete ${r.name} from the server, with its settings and rendered video?`)) return;
+      try { await api("/api/files/delete", { video: r.video }); showOpen((await api("/api/state")).recent, cancellable); }
+      catch (e) { $("#oErr").textContent = e.message; }
+    });
     li.querySelector("button").addEventListener("click", () => {
       $("#oVideo").value = r.video; $("#oSession").value = r.session || "";
       if (r.session) doOpen(); else $("#oErr").textContent = "Choose the RaceBox file for this video.";
@@ -1484,13 +1573,15 @@ function showOpen(rec, cancellable) {
     ul.appendChild(li);
   }
 }
+const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const folderOf = p => p && p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : null;
 async function pick(kind, input, other) {
   $("#oErr").textContent = "";
   let r;
-  try { r = await api("/api/pick", { kind, dir: folderOf(input.value) || folderOf(other ? other.value : "") }); }
+  try { r = await choose(kind, folderOf(input.value) || folderOf(other ? other.value : "")); }
   catch (e) { $("#oErr").textContent = e.message; return false; }
   if (r.path) { input.value = r.path; return true; }
+  if (r.error) $("#oErr").textContent = r.error;
   return false;
 }
 async function doOpen() {
@@ -1528,13 +1619,23 @@ $("#ghPickSession").addEventListener("click", async () => {
 $("#ghPickVideo").addEventListener("click", () => pickInto("ghost_video", $("#ghVideo"), $("#ghSession")));
 async function pickInto(kind, input, other) {
   let r;
-  try { r = await api("/api/pick", { kind, dir: folderOf(input.value) || folderOf(other ? other.value : "") || folderOf(S.project.session) }); }
+  try { r = await choose(kind, folderOf(input.value) || folderOf(other ? other.value : "") || folderOf(S.project.session)); }
   catch (e) { $("#ghInfo").innerHTML = `<span class="warn">${e.message}</span>`; return false; }
   if (r.path) { input.value = r.path; return true; }
   return false;
 }
 
 /* ---------- start ---------- */
+if (WEB) {
+  $("#who").hidden = false;
+  $("#whoName").textContent = WEB.email || "";
+  $("#openHint").textContent = "Upload the video from your camera and the RaceBox file from the same ride. "
+    + "They stay on the server, with your settings, until you delete them.";
+  for (const id of ["#oVideo", "#oSession"]) { $(id).readOnly = true; $(id).classList.add("ro"); }
+  $("#oVideo").placeholder = "Choose… to upload your video";
+  $("#oSession").placeholder = "Choose… to upload the .csv or .vbo";
+  $("#recentTitle").textContent = "Your videos";
+}
 (async () => {
   S = await api("/api/state");
   if (S.needs_files) { $("#files").textContent = "No video open"; showOpen(S.recent, false); return; }

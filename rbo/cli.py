@@ -686,6 +686,11 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true", help="don't open a browser window")
     p.set_defaults(fn=cmd_gui)
 
+    p = sub.add_parser("serve", help="run the editor as a web app for your club (see docs/aws.md)")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=8080)
+    p.set_defaults(fn=lambda a: __import__("rbo.web", fromlist=["serve"]).serve(a.host, a.port))
+
     p = sub.add_parser("race", help="check a Speedhive race against a RaceBox session (no video needed)")
     p.add_argument("session", help="RaceBox CSV/VBO from the race")
     p.add_argument("source", help="Speedhive session link or number, or a saved race JSON")
