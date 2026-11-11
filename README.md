@@ -186,6 +186,15 @@ Keys: Space plays/pauses, Left/Right step one frame, Shift+Left/Right one
 second. The GO 3S can record H.265; Safari and Chrome on a Mac play it, but
 if the video won't load in your browser, switch the camera to H.264.
 
+## The editor on the web, for your club
+
+`racebox-overlay serve` runs the same editor as a web app that club members sign in
+to. Each person has their own uploaded videos, RaceBox files and saved layouts, renders
+take turns, and finished videos download from the editor. `infra/` sets it up on AWS
+(one EC2 server behind CloudFront, Cognito sign-in, S3 for downloads), and GitHub
+Actions deploys it on every push. The server sleeps when nobody's using it. Setup,
+costs and adding members are in [docs/aws.md](docs/aws.md).
+
 ## Ghost lap
 
 A picture-in-picture window plays your fastest lap's footage alongside
