@@ -20,6 +20,7 @@ Settings come from environment variables, or from a JSON parameter in AWS SSM
     RBO_BUCKET        S3 bucket for rendered videos (optional: without it they download from here)
     RBO_IDLE_MINUTES  stop this EC2 instance after this long unused (0 = never)
     RBO_MAX_GB        largest upload, in GB (default 20)
+    RBO_TTS           "polly" for the crew chief to speak with Amazon Polly voices
 """
 from __future__ import annotations
 
@@ -594,6 +595,9 @@ def serve(host: str = "0.0.0.0", port: int = 8080) -> None:
     elif host not in ("127.0.0.1", "localhost"):
         print("WARNING: sign-in is off (RBO_AUTH=off): anyone who can reach this server can use it", flush=True)
     app = App(cfg)
+    if cfg.get("tts"):                       # "polly": the crew chief's voices from Amazon Polly
+        from . import crewchief
+        crewchief.TTS = cfg["tts"]
     gui.RENDER_SLOT = threading.Semaphore(1)
     WebHandler.app = app
     app.idle_watch()

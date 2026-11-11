@@ -42,6 +42,7 @@ FONT_CANDIDATES = [
     "/Library/Fonts/Arial Bold.ttf",
     "C:/Windows/Fonts/bahnschrift.ttf",
     "C:/Windows/Fonts/arialbd.ttf",
+    str(Path(__file__).parent / "fonts" / "Barlow-Bold.ttf"),          # comes with this (open licence)
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
 ]

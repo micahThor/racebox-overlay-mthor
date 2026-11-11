@@ -36,6 +36,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+# open-licence fonts that come with this (see fonts/OFL-*.txt): used where the
+# Mac fonts the themes were designed with aren't there, e.g. on a server
+FONTS = Path(__file__).parent / "fonts"
+
 THEMES: dict[str, dict] = {
     "carbon": {
         "label": "Carbon",
@@ -89,7 +93,7 @@ THEMES: dict[str, dict] = {
         "map_width": 4, "radio": "digital", "font_scale": 1.06,
         "font": ["/System/Library/Fonts/Supplemental/Futura.ttc:Condensed ExtraBold",
                  "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"],
+                 str(FONTS / "BarlowCondensed-ExtraBold.ttf")],
     },
     "hud": {
         "label": "Fighter HUD",
@@ -103,7 +107,9 @@ THEMES: dict[str, dict] = {
         "shape": "bracket", "gauge": "tape", "marker": "target", "tower": "hud",
         "map_glow": False, "map_width": 2.5, "radio": "military", "frame_bg": (4, 12, 7), "font_scale": 0.92,
         "font": ["/System/Library/Fonts/Menlo.ttc:Bold",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"],
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
+                 "/usr/share/fonts/truetype/liberation2/LiberationMono-Bold.ttf"],
     },
     "arcade": {
         "label": "Retro Arcade",
@@ -126,7 +132,7 @@ THEMES: dict[str, dict] = {
         "line": (44, 36, 28, 235), "ring": (196, 158, 92, 255),
         "radius": 22, "shape": "bezel", "gauge": "dial", "marker": "enamel", "tower": "pitboard",
         "texture": "grain", "map_glow": False, "map_width": 4.5, "radio": "vintage", "frame_bg": (70, 48, 30), "font_scale": 1.0,
-        "font": ["/System/Library/Fonts/Supplemental/Rockwell.ttc:Bold",
+        "font": ["/System/Library/Fonts/Supplemental/Rockwell.ttc:Bold", str(FONTS / "Arvo-Bold.ttf"),
                  "/usr/share/fonts/truetype/dejavu/DejaVuSerifCondensed-Bold.ttf"],
     },
 }

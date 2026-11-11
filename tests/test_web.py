@@ -110,3 +110,24 @@ def test_clean_names():
     assert web._clean_name("a;rm -rf.csv") == "a_rm -rf.csv"
     with pytest.raises(ValueError):
         web._clean_name(".hidden")
+
+
+def test_polly_voice(monkeypatch):
+    import numpy as np
+    from rbo import crewchief
+    asked = {}
+
+    class Polly:
+        def synthesize_speech(self, **kw):
+            asked.update(kw)
+            t = np.arange(16000) / 16000
+            pcm = (np.sin(2 * np.pi * 300 * t) * 12000).astype("<i2").tobytes()
+            return {"AudioStream": type("S", (), {"read": lambda self: pcm})()}
+
+    monkeypatch.setattr(crewchief, "TTS", "polly")
+    monkeypatch.setattr(crewchief, "_polly", Polly())
+    assert "Brian" in crewchief.list_voices() and crewchief.default_voice() == "Brian"
+    a = crewchief.synthesize("Box <now> & push", voice="Daniel", rate=190)
+    assert asked["VoiceId"] == "Brian" and asked["Engine"] == "neural"
+    assert "&lt;now&gt; &amp; push" in asked["Text"] and 'rate="109%"' in asked["Text"]
+    assert abs(len(a) - crewchief.RATE) < crewchief.RATE * 0.1      # about 1 s at 48 kHz

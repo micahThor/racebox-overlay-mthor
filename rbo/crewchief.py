@@ -13,14 +13,16 @@ Corners are found automatically from the curvature of your best lap and
 numbered from the start/finish line, so "turn 3" means the third corner
 the app found, which may not match the track's official numbering.
 
-Speech comes from macOS's built-in `say` voices, or ffmpeg's simple `flite`
+Speech comes from macOS's built-in `say` voices, Amazon Polly (the web version), or ffmpeg's simple `flite`
 voice where `say` isn't available. Calls get a team-radio sound (narrow
 band, a squelch burst before and after) and are mixed over the video's own
 audio, which dips under each call.
 """
 from __future__ import annotations
 
+import html
 import math
+import os
 import shutil
 import subprocess
 import tempfile
@@ -546,7 +548,18 @@ class CrewChief:
 
 # ---------------------------------------------------------------- speech + audio
 
+# Amazon Polly's natural ("neural") English voices, for the web version, which
+# runs on a server without macOS voices: RBO_TTS=polly, or the server sets TTS
+POLLY_VOICES = {"Brian": "en-GB", "Arthur": "en-GB", "Amy": "en-GB", "Emma": "en-GB",
+                "Matthew": "en-US", "Stephen": "en-US", "Gregory": "en-US", "Joey": "en-US",
+                "Kevin": "en-US", "Joanna": "en-US", "Ruth": "en-US", "Danielle": "en-US",
+                "Olivia": "en-AU", "Aria": "en-NZ", "Niamh": "en-IE", "Ayanda": "en-ZA"}
+TTS = os.environ.get("RBO_TTS") or None
+
+
 def tts_backend() -> str | None:
+    if TTS == "polly":
+        return "polly"
     if shutil.which("say"):
         return "say"
     if shutil.which("ffmpeg"):
@@ -558,6 +571,8 @@ def tts_backend() -> str | None:
 
 
 def list_voices() -> list[str]:
+    if tts_backend() == "polly":
+        return list(POLLY_VOICES)
     if not shutil.which("say"):
         return []
     out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True).stdout
@@ -572,10 +587,27 @@ def list_voices() -> list[str]:
 
 def default_voice() -> str | None:
     vs = list_voices()
-    for pref in ("Daniel", "Alex", "Tom", "Fred"):
+    for pref in ("Daniel", "Brian", "Alex", "Tom", "Fred"):
         if pref in vs:
             return pref
     return vs[0] if vs else None
+
+
+_polly = None
+
+
+def _polly_pcm(text: str, voice: str | None, rate: int) -> bytes:
+    """16 kHz 16-bit mono speech from Amazon Polly."""
+    global _polly
+    if _polly is None:
+        import boto3
+        _polly = boto3.client("polly")
+    voice = voice if voice in POLLY_VOICES else "Brian"     # a Mac voice saved on another computer
+    pct = max(50, min(200, round(rate / 175 * 100)))        # `say` talks at about 175 words a minute
+    ssml = f'<speak><prosody rate="{pct}%">{html.escape(text)}</prosody></speak>'
+    r = _polly.synthesize_speech(Text=ssml, TextType="ssml", VoiceId=voice, Engine="neural",
+                                 OutputFormat="pcm", SampleRate="16000")
+    return r["AudioStream"].read()
 
 
 def synthesize(text: str, voice: str | None = None, rate: int = 190) -> np.ndarray:
@@ -584,7 +616,11 @@ def synthesize(text: str, voice: str | None = None, rate: int = 190) -> np.ndarr
     if backend is None:
         raise RuntimeError("no speech engine: on macOS `say` is built in")
     with tempfile.TemporaryDirectory() as td:
-        if backend == "say":
+        if backend == "polly":
+            pcm = Path(td) / "v.pcm"
+            pcm.write_bytes(_polly_pcm(text, voice, rate))
+            src = ["-f", "s16le", "-ar", "16000", "-ac", "1", "-i", str(pcm)]
+        elif backend == "say":
             aiff = Path(td) / "v.aiff"
             cmd = ["say", "-r", str(rate), "-o", str(aiff)]
             if voice:
