@@ -15,8 +15,8 @@ The server **goes to sleep after 30 minutes with nobody using it**. Opening the
 editor's address wakes it up, which takes about two minutes. While it sleeps you pay
 only for its disk.
 
-Everything AWS is in `infra/` (CDK, Python). GitHub Actions deploys it on every push
-to `main` (`.github/workflows/deploy.yml`).
+Everything AWS is in `infra/` (CDK, Python). GitHub Actions checks every push, and
+deploys when you ask it to (`.github/workflows/deploy.yml`, see "Deploying changes" below).
 
 ## What it costs (us-east-1, roughly)
 
@@ -74,13 +74,24 @@ signed in as an administrator (`aws sts get-caller-identity` works), Node.js 18+
      - Optionally `BUDGET_EMAIL`: this gets an email when the month's AWS bill heads past
        $60 (change the amount with `monthlyBudgetUsd` in `infra/cdk.json`).
 
-5. **Deploy.** Push to `main`, or in the Actions tab run **Test and deploy**. The first
+5. **Deploy.** In the Actions tab, choose **Test and deploy**, then **Run workflow** (branch
+   `main`, "Deploy to AWS" ticked). The first
    deploy takes about 15 minutes (CloudFront is slow to create). When it's done, the run's
    summary shows the editor's address. You can also find it later in the AWS console:
    CloudFormation → RaceboxServer → Outputs → `EditorUrl`.
 
 6. **Sign in.** Cognito emails `ADMIN_EMAIL` a temporary password. Open the editor's
    address, sign in, and choose your own password.
+
+## Deploying changes
+
+Pushing code never deploys. Each push runs the checks (tests, the Docker image, the
+AWS setup), which is free for a public repository, so you can push as often as you like.
+When you want the club's server to have your changes, go to Actions → **Test and deploy**
+→ **Run workflow**, leave "Deploy to AWS" ticked, and run it on `main`. It runs the same
+checks first and deploys only if they pass.
+
+From the command line: `gh workflow run deploy.yml --ref main`.
 
 ## Adding club members
 

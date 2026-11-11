@@ -1,6 +1,6 @@
 # Every push: run the tests, build the app's image, and check the AWS setup.
-# Pushes to main also deploy to AWS once it's set up (docs/aws.md): the
-# repository variable AWS_ROLE_ARN switches deploying on.
+# Nothing is deployed on a push. To deploy, go to the Actions tab, choose
+# "Test and deploy", then "Run workflow", and tick "Deploy to AWS" (see docs/aws.md).
 name: Test and deploy
 
 on:
@@ -8,6 +8,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy to AWS after the checks pass"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -75,7 +80,7 @@ jobs:
 
   deploy:
     needs: [test, image, infra]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != ''
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
