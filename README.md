@@ -521,8 +521,9 @@ it, as a row centred over or under the video (not the whole frame); all of a str
 shrink together if they don't fit. Each strip also says where its panels
 sit: a side strip's stack at the **Top**, **Center** or **Bottom**; the top or
 bottom strip's row at the **Left** or **Right** end of the frame, or
-**Center** (centred over or under the video). A panel's size slider (or its corner
-handle on the preview) works as a share of its strip, up to 100%. Unless you
+**Center** (centred over or under the video). A panel in a strip always
+fills it (the strip's own slider sets the size), so it has no size slider or
+corner handle of its own. Unless you
 move them, the race panel starts in the right strip, the logos at either end
 of the bottom strip and the event name, track name and date in a row in the
 top strip.

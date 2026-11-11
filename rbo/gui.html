@@ -132,6 +132,10 @@ aside { border-left: 1px solid var(--line); background: var(--surface); display:
 .nudge button { flex: 1 0 28%; padding: 6px 4px; font-family: var(--num); font-size: 16px; }
 select { background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; }
 .result { margin-top: 10px; font-size: 14px; }
+.autobox { border: 1px solid var(--amber); border-radius: 10px; padding: 14px 14px 12px; margin-bottom: 6px;
+           background: color-mix(in srgb, var(--amber) 9%, var(--raised)); }
+.autobox p { margin: 4px 0 10px; }
+button.big { width: 100%; padding: 11px 14px; font-size: 16px; }
 .result .warn { color: var(--amber); }
 .result button { margin: 4px 6px 0 0; font-family: var(--num); }
 .laps { width: 100%; border-collapse: collapse; font-family: var(--num); font-size: 16px; }
@@ -282,9 +286,19 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
     </div>
 
     <div class="pane on" id="pane-sync">
+      <div class="autobox">
+        <h2 style="margin-top:0">Auto-sync</h2>
+        <p id="autoDesc"></p>
+        <button class="primary big" id="auto">Auto-sync</button>
+        <div class="result" id="autoRes"></div>
+      </div>
+
       <h2>Current sync</h2>
       <div class="offset num" id="offset">–</div>
       <p id="offsetSrc"></p>
+
+      <h2>Laps</h2>
+      <table class="laps" id="lapTable"></table>
 
       <h2>Line up a lap</h2>
       <p>Pause on the frame where you cross the start/finish line, choose which lap is starting, then set it.</p>
@@ -299,14 +313,6 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <button data-nudge="-1">−1 s</button><button data-nudge="-0.1">−0.1 s</button><button data-nudge="-f">−1 frame</button>
         <button data-nudge="+f">+1 frame</button><button data-nudge="0.1">+0.1 s</button><button data-nudge="1">+1 s</button>
       </div>
-
-      <h2>Auto-sync</h2>
-      <p id="autoDesc"></p>
-      <button id="auto">Auto-sync</button>
-      <div class="result" id="autoRes"></div>
-
-      <h2>Laps</h2>
-      <table class="laps" id="lapTable"></table>
     </div>
 
     <div class="pane" id="pane-look">
@@ -438,6 +444,19 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
         <div class="row"><input type="text" id="rcSrc" placeholder="https://speedhive.mylaps.com/sessions/…"
           style="flex:1;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:7px 8px"
           aria-label="Speedhive session link"><button id="rcLoad">Load</button></div>
+        <h2>Earlier sessions</h2>
+        <p class="hint">Results from the session before this one, shown big over the picture for the first 10
+          seconds of the video, and used as this race's starting grid. Choose which session it was: qualifying
+          (this video is the heat race) or the heat race (this video is the main). Leave the link empty to skip.</p>
+        <div class="info-row"><label for="rsKind">Session</label>
+          <select id="rsKind" aria-label="Which session the results are from">
+            <option value="" disabled>Choose…</option>
+            <option value="qualifying">Qualifying</option>
+            <option value="heat">Heat race</option>
+          </select><span></span></div>
+        <div class="info-row"><label for="rsLink">Results</label>
+          <input type="text" id="rsLink" placeholder="Speedhive session link"><button class="link" id="rsClear">Clear</button></div>
+        <div class="result" id="rsInfo"></div>
         <h2>You are</h2>
         <div class="row"><select id="rcRider" aria-label="Your rider" style="flex:1"></select></div>
         <h2>Map &amp; standings panel</h2>
@@ -456,19 +475,6 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
           the plain lap-time call. <span id="rcJump"></span></p>
       </div>
 
-      <h2>Earlier sessions</h2>
-      <p class="hint">Results from the session before this one, shown big over the picture for the first 10
-        seconds of the video, and used as this race's starting grid. Choose which session it was: qualifying
-        (this video is the heat race) or the heat race (this video is the main). Leave the link empty to skip.</p>
-      <div class="info-row"><label for="rsKind">Session</label>
-        <select id="rsKind" aria-label="Which session the results are from">
-          <option value="" disabled>Choose…</option>
-          <option value="qualifying">Qualifying</option>
-          <option value="heat">Heat race</option>
-        </select><span></span></div>
-      <div class="info-row"><label for="rsLink">Results</label>
-        <input type="text" id="rsLink" placeholder="Speedhive session link"><button class="link" id="rsClear">Clear</button></div>
-      <div class="result" id="rsInfo"></div>
     </div>
 
     <div class="render">
@@ -546,7 +552,7 @@ function drawPanels(h) {
         el.dataset.strip = p.side || "";
         el.title = p.side ? "In the " + p.side + " strip: drag along it to reorder, or onto the video to take it out"
                           : "Drag to move" + (hasStrips() ? " (or into a strip)" : "");
-        addHandles(el, p.reshape || "");
+        addHandles(el, p.reshape || "", !!p.side);     // in a strip its size is the strip's
         if (p.key === "ghost") placeGhost(el, p, h.ghost);
         if (el.classList.contains("drag")) continue;
         el.style.left = (p.x / h.pw * 100) + "%";
@@ -566,16 +572,17 @@ function drawPanels(h) {
 }
 /* resize handles: the corner scales a panel evenly; the right and bottom edges
    change only its width or height (panels whose contents can re-flow) */
-function addHandles(el, reshape) {
-  if (el.dataset.reshape === reshape && el.querySelector(".hdl")) return;
+function addHandles(el, reshape, inStrip) {
+  const sig = reshape + (inStrip ? "|strip" : "");
+  if (el.dataset.reshape === sig && el.querySelector(".hdl")) return;
   el.querySelectorAll(".hdl").forEach(h => h.remove());
-  el.dataset.reshape = reshape;
+  el.dataset.reshape = sig;
   const mk = (cls, kind, title) => {
     const h = document.createElement("div"); h.className = "hdl " + cls; h.dataset.kind = kind; h.title = title;
     el.appendChild(h); attachResize(el, h);
   };
   if (reshape === "none") return;
-  mk("hdl-se", "scale", "Drag to resize");
+  if (!inStrip) mk("hdl-se", "scale", "Drag to resize");
   if (reshape.includes("w")) mk("hdl-e", "w", "Drag to make it wider or narrower");
   if (reshape.includes("h")) mk("hdl-s", "h", "Drag to make it taller or shorter");
 }
@@ -979,11 +986,10 @@ function renderLook() {
       <input type="range" min="0.5" max="2" step="0.05" value="${sc}" aria-label="${p.label} size">
       <span class="pct">${Math.round(sc * 100)}%</span>`;
     const strips = Object.keys(canvas().strips || {});
-    if (whereOf(p.key)) {                  // in a strip: the slider is a share of the strip (up to 100%)
+    if (whereOf(p.key)) {                  // in a strip: it fills the strip (no size slider)
       const r_ = row.querySelector("input[type=range]");
-      r_.max = "1"; r_.min = "0.3";
-      if (+r_.value > 1) { r_.value = 1; row.querySelector(".pct").textContent = "100% of the strip"; }
-      else row.querySelector(".pct").textContent = Math.round(r_.value * 100) + "% of the strip";
+      r_.style.visibility = "hidden"; r_.disabled = true;
+      row.querySelector(".pct").textContent = "fills the strip";
     }
     if (strips.length && !p.inside) {     // where this panel goes: the video or one of the strips
       const sel = document.createElement("select"); sel.className = "where"; sel.setAttribute("aria-label", p.label + " goes");

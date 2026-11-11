@@ -792,8 +792,7 @@ class Hud(StyleMixin, GaugeMixin, ResultsMixin):
                 if key in self.hide or self.in_side(key) != st:
                     continue
                 L, T, R, B = self._trim(name)
-                # the size slider: a share of the strip (100% fills it)
-                share = min(max(float((self.layout.get(key, {}) or {}).get("scale", 1.0) or 1.0), 0.2), 1.0)
+                share = 1.0                    # a panel in a strip fills it (strip sliders set the size)
                 if st in ("top", "bottom"):
                     k = (sh - 2 * md) / max(rh - T - B, 1) * share
                     if name == "text":           # names and the date: kept to a sensible size in a tall strip
