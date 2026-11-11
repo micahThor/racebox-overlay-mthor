@@ -457,13 +457,17 @@ input.path { flex: 1; background: var(--raised); border: 1px solid var(--line); 
       </div>
 
       <h2>Earlier sessions</h2>
-      <p class="hint">Results from earlier in the race day, shown big over the picture for the first 10 seconds
-        of the video. Qualifying results mean this video is the heat race; heat race results mean it's the main
-        (if you give both, the heat's show). Leave them empty to skip.</p>
-      <div class="info-row"><label for="rsQual">Qualifying</label>
-        <input type="text" id="rsQual" placeholder="Speedhive session link"><button class="link" id="rsQualClear">Clear</button></div>
-      <div class="info-row"><label for="rsHeat">Heat race</label>
-        <input type="text" id="rsHeat" placeholder="Speedhive session link"><button class="link" id="rsHeatClear">Clear</button></div>
+      <p class="hint">Results from the session before this one, shown big over the picture for the first 10
+        seconds of the video, and used as this race's starting grid. Choose which session it was: qualifying
+        (this video is the heat race) or the heat race (this video is the main). Leave the link empty to skip.</p>
+      <div class="info-row"><label for="rsKind">Session</label>
+        <select id="rsKind" aria-label="Which session the results are from">
+          <option value="" disabled>Choose…</option>
+          <option value="qualifying">Qualifying</option>
+          <option value="heat">Heat race</option>
+        </select><span></span></div>
+      <div class="info-row"><label for="rsLink">Results</label>
+        <input type="text" id="rsLink" placeholder="Speedhive session link"><button class="link" id="rsClear">Clear</button></div>
       <div class="result" id="rsInfo"></div>
     </div>
 
@@ -1054,24 +1058,34 @@ function showResults(h) {
                             width: w / h.pw * 100 + "%", height: hh / h.ph * 100 + "%", opacity: r.show ? 1 : 0 });
   overlay.classList.toggle("results-on", r.show);
 }
+let rsKindPick = "";              // the session picked before a link is in
+function rsKind() { return P.heat_source ? "heat" : P.qual_source ? "qualifying" : rsKindPick; }
 function renderResults() {
   const R = S.results || {};
-  if (document.activeElement !== $("#rsQual")) $("#rsQual").value = P.qual_source || "";
-  if (document.activeElement !== $("#rsHeat")) $("#rsHeat").value = P.heat_source || "";
+  const kind = rsKind();
+  $("#rsKind").value = kind;
+  if (document.activeElement !== $("#rsLink")) $("#rsLink").value = P.heat_source || P.qual_source || "";
   const el = $("#rsInfo");
   if (R.error) el.innerHTML = `<span class="warn">${R.error}</span>`;
   else if (R.kind) el.textContent = `${R.title} results (${R.riders} riders${R.me ? ", you P" + R.me : ""}) show for the first 10 s: ` +
     (R.kind === "heat" ? "this video is the main race." : "this video is the heat race.");
   else el.textContent = "";
 }
-async function saveResults(ch) {
-  $("#rsInfo").textContent = "Loading…";
-  await save(ch); renderResults();
+async function saveResults() {
+  const link = $("#rsLink").value.trim(), kind = $("#rsKind").value;
+  if (link && !kind) {              // one choice has to be made
+    $("#rsInfo").innerHTML = `<span class="warn">Choose whether these are qualifying or heat race results.</span>`;
+    $("#rsKind").focus();
+    return;
+  }
+  $("#rsInfo").textContent = link ? "Loading…" : "";
+  await save({ qual_source: link && kind === "qualifying" ? link : null,
+               heat_source: link && kind === "heat" ? link : null });
+  renderResults();
 }
-$("#rsQual").addEventListener("change", e => saveResults({ qual_source: e.target.value.trim() || null }));
-$("#rsHeat").addEventListener("change", e => saveResults({ heat_source: e.target.value.trim() || null }));
-$("#rsQualClear").addEventListener("click", () => saveResults({ qual_source: null }));
-$("#rsHeatClear").addEventListener("click", () => saveResults({ heat_source: null }));
+$("#rsKind").addEventListener("change", e => { rsKindPick = e.target.value; saveResults(); });
+$("#rsLink").addEventListener("change", saveResults);
+$("#rsClear").addEventListener("click", () => { $("#rsLink").value = ""; saveResults(); });
 
 /* ---------- saved layouts ---------- */
 let PS = { presets: [], default: null };

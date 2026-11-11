@@ -402,13 +402,15 @@ lists them.
 ### Qualifying and heat results at the start
 
 A race day runs qualifying, then heat races, then the main. In the Race tab,
-under **Earlier sessions**, paste the Speedhive link of the session before
-this video's:
+under **Earlier sessions**, choose which session came before this video's
+under **Session** (you have to pick one), and paste its Speedhive link under
+**Results**:
 
-- **Qualifying** results: this video is the heat race. The qualifying
-  results show at the start.
-- **Heat race** results: this video is the main. The heat results show at
-  the start (if both are given, the heat's win).
+- **Qualifying**: this video is the heat race. The qualifying results show at
+  the start.
+- **Heat race**: this video is the main. The heat results show at the start.
+
+Switching the session keeps the link; **Clear** removes it.
 
 The results show big over the picture, in the current theme, for the first
 10 seconds of the rendered video (from the render's start, so a trimmed
