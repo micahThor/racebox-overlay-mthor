@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waking up · RaceBox Overlay</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #14181d;
+         color: #e8ecf0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 440px; padding: 24px; text-align: center; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { color: #9aa6b2; margin: 8px 0; }
+  .bar { height: 4px; background: #2a3138; border-radius: 2px; overflow: hidden; margin: 22px 0 10px; }
+  .bar div { height: 100%; width: 30%; background: #f5b400; animation: go 1.4s ease-in-out infinite; }
+  @keyframes go { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  #msg { font-size: 14px; }
+  .err { color: #ff8a80; }
+</style>
+</head>
+<body>
+<main>
+  <h1>The editor is waking up</h1>
+  <p>It goes to sleep when nobody's using it, to save money. Starting it takes about two minutes;
+    this page opens the editor as soon as it's ready.</p>
+  <div class="bar"><div></div></div>
+  <p id="msg">Starting the server…</p>
+</main>
+<script>
+const msg = document.getElementById("msg");
+const t0 = Date.now();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function wake() {
+  try {
+    const r = await fetch("/_wake", { cache: "no-store" });
+    const j = await r.json();
+    return j.state;
+  } catch (e) { return "unknown"; }
+}
+(async () => {
+  let state = await wake(), last = Date.now();
+  while (true) {
+    try {
+      const r = await fetch("/healthz", { cache: "no-store" });
+      if (r.ok && (await r.text()).trim() === "ok") { location.reload(); return; }
+    } catch (e) { /* still starting */ }
+    const s = Math.round((Date.now() - t0) / 1000);
+    msg.textContent = state === "stopping"
+      ? `It was just going to sleep; it'll start again in a moment (${s} s)…`
+      : `Starting the server (${s} s)…`;
+    if (s > 420) { msg.className = "err"; msg.textContent = "This is taking longer than it should. Try reloading the page in a few minutes."; }
+    if (Date.now() - last > 20000) { state = await wake(); last = Date.now(); }   // e.g. it was still stopping
+    await sleep(3000);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.git
+.github
+infra
+docs
+tests
+tools
+examples
+**/__pycache__
+*.mp4
+*.mov
+cdk.out

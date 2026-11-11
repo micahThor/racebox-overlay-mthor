@@ -1,0 +1,15 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "instanceType": "c7i.2xlarge",
+    "dataGb": 200,
+    "idleMinutes": 30,
+    "keepRendersDays": 30,
+    "maxUploadGb": 20,
+    "monthlyBudgetUsd": 60,
+    "githubRepo": "micahThor/racebox-overlay-mthor",
+    "githubBranch": "main",
+    "@aws-cdk/aws-ec2:uniqueImdsv2TemplateName": true,
+    "@aws-cdk/core:target-partitions": ["aws"]
+  }
+}

@@ -1,0 +1,133 @@
+# Every push: run the tests, build the app's image, and check the AWS setup.
+# Pushes to main also deploy to AWS once it's set up (docs/aws.md): the
+# repository variable AWS_ROLE_ARN switches deploying on.
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+      - name: Install
+        run: pip install ".[server,test]"
+      - name: Tests
+        run: python -m pytest -q tests
+      - name: The club web app starts and answers
+        run: |
+          RBO_AUTH=off RBO_DATA="$RUNNER_TEMP/data" racebox-overlay serve --host 127.0.0.1 --port 8080 &
+          for i in $(seq 1 30); do curl -fsS localhost:8080/healthz && break; sleep 1; done
+          curl -fsS localhost:8080/api/state
+          curl -fsS localhost:8080/ | grep -q 'const WEB = {"email"'
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t racebox-overlay:ci .
+      - name: The image runs the app
+        run: |
+          docker run -d --name rbo -p 8080:8080 -e RBO_AUTH=off racebox-overlay:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8080/healthz && break; sleep 1; done
+          curl -fsS localhost:8080/api/state
+          docker exec rbo ffmpeg -hide_banner -version | head -1
+          docker exec rbo python -c "from rbo import hud; print(hud.Hud.__name__, hud.FONT_CANDIDATES[-3])"
+          docker logs rbo
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDK
+        run: pip install -r infra/requirements.txt
+      - name: Check the AWS setup builds (cdk synth)
+        working-directory: infra
+        env:
+          CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: npx -y aws-cdk@2 synth --quiet
+
+  deploy:
+    needs: [test, image, infra]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy the AWS setup
+        working-directory: infra
+        env:
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          BUDGET_EMAIL: ${{ secrets.BUDGET_EMAIL }}
+          INSTANCE_TYPE: ${{ vars.INSTANCE_TYPE }}
+        run: |
+          pip install -q -r requirements.txt
+          args=()
+          [ -n "$ADMIN_EMAIL" ] && args+=(-c "adminEmail=$ADMIN_EMAIL")
+          [ -n "$BUDGET_EMAIL" ] && args+=(-c "budgetEmail=$BUDGET_EMAIL")
+          [ -n "$INSTANCE_TYPE" ] && args+=(-c "instanceType=$INSTANCE_TYPE")
+          npx -y aws-cdk@2 deploy RaceboxServer --require-approval never --outputs-file outputs.json "${args[@]}"
+      - name: Sign in to the image registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push the image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t "$REGISTRY/racebox-overlay:latest" -t "$REGISTRY/racebox-overlay:${GITHUB_SHA::12}" .
+          docker push --all-tags "$REGISTRY/racebox-overlay"
+      - name: Restart the app on the server
+        run: |
+          iid=$(jq -r .RaceboxServer.InstanceId infra/outputs.json)
+          state=$(aws ec2 describe-instances --instance-ids "$iid" --query 'Reservations[0].Instances[0].State.Name' --output text)
+          if [ "$state" != "running" ]; then
+            echo "The server is $state (asleep): it picks up the new version when it next starts."
+            exit 0
+          fi
+          cid=$(aws ssm send-command --instance-ids "$iid" --document-name AWS-RunShellScript \
+                --comment "deploy ${GITHUB_SHA::12}" --parameters 'commands=["systemctl restart racebox"]' \
+                --query Command.CommandId --output text)
+          aws ssm wait command-executed --command-id "$cid" --instance-id "$iid" || \
+            aws ssm get-command-invocation --command-id "$cid" --instance-id "$iid"
+      - name: Where it is
+        run: |
+          echo "Editor: $(jq -r .RaceboxServer.EditorUrl infra/outputs.json)" >> "$GITHUB_STEP_SUMMARY"
