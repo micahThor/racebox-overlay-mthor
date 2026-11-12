@@ -80,7 +80,7 @@ jobs:
 
   deploy:
     needs: [test, image, infra]
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main' && (vars.AWS_ROLE_ARN != '' || vars.AWS_DEPLOY_WITH_KEYS == 'true')
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
@@ -97,6 +97,9 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          # accounts that can't use the GitHub sign-in provider: the deploy user's key (docs/aws.md)
+          aws-access-key-id: ${{ vars.AWS_DEPLOY_WITH_KEYS == 'true' && secrets.AWS_ACCESS_KEY_ID || '' }}
+          aws-secret-access-key: ${{ vars.AWS_DEPLOY_WITH_KEYS == 'true' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy the AWS setup
         working-directory: infra

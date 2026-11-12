@@ -63,6 +63,19 @@ signed in as an administrator (`aws sts get-caller-identity` works), Node.js 18+
    `token.actions.githubusercontent.com already exists`), pass its ARN instead:
    `cdk deploy RaceboxGithub -c githubOidcProviderArn=arn:aws:iam::<account>:oidc-provider/token.actions.githubusercontent.com`
 
+   **If it fails with `iam:CreateOpenIDConnectProvider ... explicit deny in a service
+   control policy`:** some new AWS accounts aren't allowed to add GitHub as a sign-in
+   provider. Use a deploy user with an access key instead:
+
+   ```sh
+   cdk deploy RaceboxGithub -c githubAuth=keys
+   ```
+
+   Then in the console go to IAM → Users → `racebox-overlay-github-deploy` → Security
+   credentials → **Create access key** → "Third-party service". In step 4, instead of
+   `AWS_ROLE_ARN`, add the secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` and the
+   variable `AWS_DEPLOY_WITH_KEYS` = `true`. That user can only deploy this app.
+
 4. **Tell GitHub about it.** In the repository on GitHub, go to Settings → Secrets and
    variables → Actions:
    - Variables tab:
