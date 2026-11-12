@@ -191,8 +191,9 @@ if the video won't load in your browser, switch the camera to H.264.
 `racebox-overlay serve` runs the same editor as a web app that club members sign in
 to. Each person has their own uploaded videos, RaceBox files and saved layouts, renders
 take turns, and finished videos download from the editor. `infra/` sets it up on AWS
-(one EC2 server behind CloudFront, Cognito sign-in, S3 for downloads), and GitHub
-Actions checks every push and deploys when you ask it to. The server sleeps when nobody's using it. Setup,
+(one EC2 server behind CloudFront, Cognito sign-in, S3 for downloads), GitHub
+Actions checks every push and publishes the app image when you ask; you deploy from
+your computer with `infra/deploy.sh`, so GitHub holds no AWS keys. The server sleeps when nobody's using it. Setup,
 costs and adding members are in [docs/aws.md](docs/aws.md).
 
 ## Ghost lap

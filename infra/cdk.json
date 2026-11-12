@@ -7,8 +7,6 @@
     "keepRendersDays": 30,
     "maxUploadGb": 20,
     "monthlyBudgetUsd": 60,
-    "githubRepo": "micahThor/racebox-overlay-mthor",
-    "githubBranch": "main",
     "@aws-cdk/aws-ec2:uniqueImdsv2TemplateName": true,
     "@aws-cdk/core:target-partitions": ["aws"]
   }

@@ -33,7 +33,7 @@ RestartSec=15
 TimeoutStartSec=600
 ExecStartPre=-/usr/bin/docker rm -f racebox
 ExecStartPre=-/usr/bin/docker image prune -f
-ExecStartPre=/bin/sh -c 'aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__ && docker pull __IMAGE__ || docker image inspect __IMAGE__ >/dev/null'
+ExecStartPre=/bin/sh -c 'docker pull __IMAGE__ || docker image inspect __IMAGE__ >/dev/null'
 ExecStart=/usr/bin/docker run --rm --name racebox --network host -v /data:/data -e RBO_CONFIG_PARAM=__CONFIG_PARAM__ -e AWS_REGION=__REGION__ __IMAGE__ racebox-overlay serve --host 0.0.0.0 --port __PORT__
 ExecStop=/usr/bin/docker stop -t 30 racebox
 

@@ -21,7 +21,6 @@ from aws_cdk import (
     aws_cloudfront_origins as origins,
     aws_cognito as cognito,
     aws_ec2 as ec2,
-    aws_ecr as ecr,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_s3 as s3,
@@ -32,7 +31,8 @@ from aws_cdk import (
 from constructs import Construct
 
 HERE = Path(__file__).resolve().parent.parent
-REPO_NAME = "racebox-overlay"
+# the app's image: built and published by GitHub Actions (no AWS sign-in needed there)
+DEFAULT_IMAGE = "ghcr.io/micahthor/racebox-overlay-mthor:latest"
 CONFIG_PARAM = "/racebox-overlay/config"
 PORT = 8080
 TAG = ("racebox", "server")
@@ -72,10 +72,6 @@ class ServerStack(Stack):
                             ec2.Port.tcp(PORT), "CloudFront to the editor")
 
         # ------------------------------------------------------------ storage
-        repo = ecr.Repository(self, "Images", repository_name=REPO_NAME,
-                              image_scan_on_push=True,
-                              lifecycle_rules=[ecr.LifecycleRule(max_image_count=10)],
-                              removal_policy=RemovalPolicy.RETAIN)
         renders = s3.Bucket(
             self, "Renders", block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.S3_MANAGED, enforce_ssl=True,
@@ -91,7 +87,6 @@ class ServerStack(Stack):
         role = iam.Role(self, "ServerRole", assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
                         managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
                             "AmazonSSMManagedInstanceCore")])         # Session Manager instead of SSH
-        repo.grant_pull(role)
         renders.grant_read_write(role)
         renders.grant_delete(role)
         role.add_to_policy(iam.PolicyStatement(actions=["polly:SynthesizeSpeech"], resources=["*"]))
@@ -107,12 +102,11 @@ class ServerStack(Stack):
                           volume_type=ec2.EbsDeviceVolumeType.GP3, encrypted=True,
                           removal_policy=RemovalPolicy.SNAPSHOT)
 
-        image = f"{self.account}.dkr.ecr.{region}.amazonaws.com/{REPO_NAME}:latest"
+        image = ctx(self, "image", DEFAULT_IMAGE)
         user_data = ec2.UserData.for_linux()
         user_data.add_commands(*(HERE / "server_setup.sh").read_text().replace(
             "__VOLUME_ID__", data.volume_id).replace("__IMAGE__", image).replace(
             "__REGION__", region).replace("__CONFIG_PARAM__", CONFIG_PARAM).replace(
-            "__REGISTRY__", f"{self.account}.dkr.ecr.{region}.amazonaws.com").replace(
             "__PORT__", str(PORT)).splitlines())
 
         server = ec2.Instance(
@@ -203,14 +197,6 @@ class ServerStack(Stack):
                 flows=cognito.OAuthFlows(authorization_code_grant=True),
                 scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
                 callback_urls=[f"{url}/auth/callback"], logout_urls=[f"{url}/"]))
-        admin = ctx(self, "adminEmail")
-        if admin:                    # the first person: Cognito emails them a temporary password
-            cognito.CfnUserPoolUser(
-                self, "FirstUser", user_pool_id=pool.user_pool_id, username=admin,
-                desired_delivery_mediums=["EMAIL"],
-                user_attributes=[cognito.CfnUserPoolUser.AttributeTypeProperty(name="email", value=admin),
-                                 cognito.CfnUserPoolUser.AttributeTypeProperty(name="email_verified",
-                                                                               value="true")])
 
         # ------------------------------------------------------------ the app's settings
         ssm.StringParameter(
@@ -243,4 +229,3 @@ class ServerStack(Stack):
         cdk.CfnOutput(self, "UserPoolId", value=pool.user_pool_id,
                       description="Add club members here (see docs/aws.md)")
         cdk.CfnOutput(self, "RendersBucket", value=renders.bucket_name)
-        cdk.CfnOutput(self, "ImageRepo", value=repo.repository_uri)

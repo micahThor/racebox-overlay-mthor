@@ -1,7 +1,8 @@
 # Every push: run the tests, build the app's image, and check the AWS setup.
-# Nothing is deployed on a push. To deploy, go to the Actions tab, choose
-# "Test and deploy", then "Run workflow", and tick "Deploy to AWS" (see docs/aws.md).
-name: Test and deploy
+# To publish a new image for the club's server: Actions tab → "Test and publish" →
+# "Run workflow". GitHub never signs in to AWS; you deploy from your computer
+# with infra/deploy.sh (see docs/aws.md).
+name: Test and publish
 
 on:
   push:
@@ -9,8 +10,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      deploy:
-        description: "Deploy to AWS after the checks pass"
+      publish:
+        description: "Publish the app's image after the checks pass"
         type: boolean
         default: true
 
@@ -22,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
 
 jobs:
   test:
@@ -78,64 +79,26 @@ jobs:
           CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: npx -y aws-cdk@2 synth --quiet
 
-  deploy:
+  publish:
     needs: [test, image, infra]
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main' && (vars.AWS_ROLE_ARN != '' || vars.AWS_DEPLOY_WITH_KEYS == 'true')
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
-      id-token: write
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Sign in to AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          # accounts that can't use the GitHub sign-in provider: the deploy user's key (docs/aws.md)
-          aws-access-key-id: ${{ vars.AWS_DEPLOY_WITH_KEYS == 'true' && secrets.AWS_ACCESS_KEY_ID || '' }}
-          aws-secret-access-key: ${{ vars.AWS_DEPLOY_WITH_KEYS == 'true' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy the AWS setup
-        working-directory: infra
-        env:
-          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          BUDGET_EMAIL: ${{ secrets.BUDGET_EMAIL }}
-          INSTANCE_TYPE: ${{ vars.INSTANCE_TYPE }}
+      - name: Sign in to GitHub's image registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and publish the image
         run: |
-          pip install -q -r requirements.txt
-          args=()
-          [ -n "$ADMIN_EMAIL" ] && args+=(-c "adminEmail=$ADMIN_EMAIL")
-          [ -n "$BUDGET_EMAIL" ] && args+=(-c "budgetEmail=$BUDGET_EMAIL")
-          [ -n "$INSTANCE_TYPE" ] && args+=(-c "instanceType=$INSTANCE_TYPE")
-          npx -y aws-cdk@2 deploy RaceboxServer --require-approval never --outputs-file outputs.json "${args[@]}"
-      - name: Sign in to the image registry
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Build and push the image
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-        run: |
-          docker build -t "$REGISTRY/racebox-overlay:latest" -t "$REGISTRY/racebox-overlay:${GITHUB_SHA::12}" .
-          docker push --all-tags "$REGISTRY/racebox-overlay"
-      - name: Restart the app on the server
-        run: |
-          iid=$(jq -r .RaceboxServer.InstanceId infra/outputs.json)
-          state=$(aws ec2 describe-instances --instance-ids "$iid" --query 'Reservations[0].Instances[0].State.Name' --output text)
-          if [ "$state" != "running" ]; then
-            echo "The server is $state (asleep): it picks up the new version when it next starts."
-            exit 0
-          fi
-          cid=$(aws ssm send-command --instance-ids "$iid" --document-name AWS-RunShellScript \
-                --comment "deploy ${GITHUB_SHA::12}" --parameters 'commands=["systemctl restart racebox"]' \
-                --query Command.CommandId --output text)
-          aws ssm wait command-executed --command-id "$cid" --instance-id "$iid" || \
-            aws ssm get-command-invocation --command-id "$cid" --instance-id "$iid"
-      - name: Where it is
-        run: |
-          echo "Editor: $(jq -r .RaceboxServer.EditorUrl infra/outputs.json)" >> "$GITHUB_STEP_SUMMARY"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker build -t "$image:latest" -t "$image:${GITHUB_SHA::12}" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" .
+          docker push --all-tags "$image"
+          {
+            echo "Published \`$image:latest\`."
+            echo
+            echo "To put it on the club's server, run \`infra/deploy.sh restart\` on your computer"
+            echo "(or \`infra/deploy.sh\` if you changed anything in \`infra/\`)."
+          } >> "$GITHUB_STEP_SUMMARY"

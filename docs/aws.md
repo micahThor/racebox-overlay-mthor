@@ -15,10 +15,11 @@ The server **goes to sleep after 30 minutes with nobody using it**. Opening the
 editor's address wakes it up, which takes about two minutes. While it sleeps you pay
 only for its disk.
 
-Everything AWS is in `infra/` (CDK, Python). GitHub Actions checks every push, and
-deploys when you ask it to (`.github/workflows/deploy.yml`, see "Deploying changes" below).
+Everything AWS is in `infra/` (CDK, Python). GitHub Actions checks every push and,
+when you ask, publishes the app's image to GitHub's image registry. GitHub never signs
+in to AWS. You deploy from your computer, signed in as yourself, with `infra/deploy.sh`.
 
-## What it costs (us-east-1, roughly)
+## What it costs (US regions, roughly)
 
 | | |
 |---|---|
@@ -34,7 +35,8 @@ is the disk: delete old videos, or make it smaller (`dataGb`). For renders 2x fa
 ## Setting it up (once, from your computer)
 
 You need an AWS account, the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-signed in as an administrator (`aws sts get-caller-identity` works), Node.js 18+ and Python 3.9+.
+signed in as an administrator (`aws sts get-caller-identity` works), Node.js 22 or 24,
+and Python 3.9+.
 
 1. **Get the CDK tools** (from the repository's folder):
 
@@ -45,86 +47,70 @@ signed in as an administrator (`aws sts get-caller-identity` works), Node.js 18+
    npm install -g aws-cdk
    ```
 
-2. **Prepare the account for CDK** (once per account and region):
+2. **Your settings.** Copy `infra/local.env.example` to `infra/local.env` and set
+   `AWS_REGION`. `local.env` isn't committed, so your email and profile stay on your computer.
+
+   New AWS accounts may only work in one home region. If you get "explicit deny in a
+   service control policy" errors, find yours at settings.aws.com → Projects → your
+   project → Additional info, and use that region.
+
+3. **Prepare the account for CDK** (once per account and region):
 
    ```sh
-   export AWS_REGION=us-east-1
+   export AWS_REGION=us-east-2      # the same region as in local.env
    cdk bootstrap
    ```
 
-3. **Let GitHub deploy.** This creates a role that only this repository's `main` branch
-   can use. It stores no AWS keys in GitHub.
+4. **Publish the app's image.** On GitHub, go to Actions → **Test and publish** →
+   **Run workflow** on `main`. Once it's done, make the image public so the server can
+   download it: on the repository's main page, open **Packages** → `racebox-overlay-mthor`
+   → **Package settings** → **Change visibility** → **Public**. You only do this once.
+   The image is the open-source app; it holds no settings or data.
+
+5. **Deploy:**
 
    ```sh
-   cdk deploy RaceboxGithub
+   ./deploy.sh
    ```
 
-   If your account already has a GitHub sign-in provider (the deploy says
-   `token.actions.githubusercontent.com already exists`), pass its ARN instead:
-   `cdk deploy RaceboxGithub -c githubOidcProviderArn=arn:aws:iam::<account>:oidc-provider/token.actions.githubusercontent.com`
+   The first deploy takes about 15 minutes (CloudFront is slow to create). It ends by
+   printing the editor's address. `./deploy.sh url` prints it again later.
 
-   **If it fails with `iam:CreateOpenIDConnectProvider ... explicit deny in a service
-   control policy`:** some new AWS accounts aren't allowed to add GitHub as a sign-in
-   provider. Use a deploy user with an access key instead:
+6. **Let yourself in:**
 
    ```sh
-   cdk deploy RaceboxGithub -c githubAuth=keys
+   ./deploy.sh add-user you@example.com
    ```
 
-   Then in the console go to IAM → Users → `racebox-overlay-github-deploy` → Security
-   credentials → **Create access key** → "Third-party service". In step 4, instead of
-   `AWS_ROLE_ARN`, add the secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` and the
-   variable `AWS_DEPLOY_WITH_KEYS` = `true`. That user can only deploy this app.
-
-4. **Tell GitHub about it.** In the repository on GitHub, go to Settings → Secrets and
-   variables → Actions:
-   - Variables tab:
-     - `AWS_ROLE_ARN`: the `DeployRoleArn` the last step printed.
-     - `AWS_REGION`: your region, for example `us-east-1`.
-     - Optionally `INSTANCE_TYPE`, for example `c7i.4xlarge`.
-   - Secrets tab. Use secrets, not variables, because this repository's Actions logs are public:
-     - `ADMIN_EMAIL`: your email. You become the first person who can sign in.
-     - Optionally `BUDGET_EMAIL`: this gets an email when the month's AWS bill heads past
-       $60 (change the amount with `monthlyBudgetUsd` in `infra/cdk.json`).
-
-5. **Deploy.** In the Actions tab, choose **Test and deploy**, then **Run workflow** (branch
-   `main`, "Deploy to AWS" ticked). The first
-   deploy takes about 15 minutes (CloudFront is slow to create). When it's done, the run's
-   summary shows the editor's address. You can also find it later in the AWS console:
-   CloudFormation → RaceboxServer → Outputs → `EditorUrl`.
-
-6. **Sign in.** Cognito emails `ADMIN_EMAIL` a temporary password. Open the editor's
-   address, sign in, and choose your own password.
+   Cognito emails you a temporary password. Open the editor's address, sign in, and
+   choose your own password.
 
 ## Deploying changes
 
-Pushing code never deploys. Each push runs the checks (tests, the Docker image, the
-AWS setup), which is free for a public repository, so you can push as often as you like.
-When you want the club's server to have your changes, go to Actions → **Test and deploy**
-→ **Run workflow**, leave "Deploy to AWS" ticked, and run it on `main`. It runs the same
-checks first and deploys only if they pass.
+Pushing code never deploys anything. Each push runs the checks (tests, the Docker image,
+the AWS setup). That's free for a public repository, so push as often as you like.
+When you want the club's server to have your changes:
 
-From the command line: `gh workflow run deploy.yml --ref main`.
+1. **Publish:** Actions → **Test and publish** → **Run workflow** (or
+   `gh workflow run deploy.yml --ref main`). It publishes only if the checks pass.
+2. **Restart the app:** from `infra/`, run `./deploy.sh restart`. If you changed
+   anything in `infra/`, run `./deploy.sh` instead, which updates the AWS setup too.
+   If the server is asleep, there's nothing to do: it picks up the newest image when it wakes.
 
 ## Adding club members
 
 Nobody can sign up on their own. To add someone:
 
-- **In the console:** Cognito → User pools → `racebox-overlay` → Users → Create user.
-  Choose "Send an email invitation", enter their email address, and tick "Mark email
-  address as verified".
-- **From the command line:**
+```sh
+./deploy.sh add-user rider@example.com
+```
 
-  ```sh
-  POOL=$(aws cloudformation describe-stacks --stack-name RaceboxServer \
-         --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
-  aws cognito-idp admin-create-user --user-pool-id "$POOL" --username rider@example.com \
-      --user-attributes Name=email,Value=rider@example.com Name=email_verified,Value=true \
-      --desired-delivery-mediums EMAIL
-  ```
+Or in the console: Cognito → User pools → `racebox-overlay` → Users → Create user.
+Choose "Send an email invitation", enter their email address, and tick "Mark email address
+as verified".
 
 They get an email with the address and a temporary password. To remove someone,
-delete or disable their user in the same place. Their files stay on the server until
+delete or disable their user in the console. Their files stay on the server until
 you delete them (see below).
 
 ## Using it
@@ -147,7 +133,7 @@ It's the editor you know, with a few differences:
 
 ## Settings
 
-In `infra/cdk.json` (or `-c name=value` on `cdk deploy`):
+In `infra/cdk.json`. `INSTANCE_TYPE` and `BUDGET_EMAIL` can also go in `infra/local.env`.
 
 | Setting | Default | |
 |---|---|---|
@@ -156,8 +142,8 @@ In `infra/cdk.json` (or `-c name=value` on `cdk deploy`):
 | `idleMinutes` | `30` | sleep after this long unused (`0` = never) |
 | `keepRendersDays` | `30` | how long finished videos stay downloadable |
 | `maxUploadGb` | `20` | largest file someone can upload |
-| `monthlyBudgetUsd` | `60` | the spending alarm (needs `BUDGET_EMAIL`) |
-| `githubRepo`, `githubBranch` | this repo, `main` | who can deploy |
+| `monthlyBudgetUsd` | `60` | the spending alarm (needs `BUDGET_EMAIL` in `local.env`) |
+| `image` | this repo's image on ghcr.io | the app image the server runs |
 
 ## Looking after it
 
@@ -181,8 +167,8 @@ In `infra/cdk.json` (or `-c name=value` on `cdk deploy`):
 - People can only open files in their own folder on the server.
 - Videos and settings live on their own encrypted volume, apart from the server's
   system disk. Changing `instanceType` stops and restarts the server; it doesn't replace it.
-- `cdk destroy RaceboxServer` deletes the server. It keeps the S3 bucket, the image
-  registry and the user pool, and leaves a snapshot of the data volume. Delete those by
+- `cdk destroy RaceboxServer` deletes the server. It keeps the S3 bucket and the user
+  pool, and leaves a snapshot of the data volume. Delete those by
   hand if you want them gone.
 
 ## Trying the web version on your computer
