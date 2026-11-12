@@ -173,10 +173,20 @@ In `infra/cdk.json`. `INSTANCE_TYPE` and `BUDGET_EMAIL` can also go in `infra/lo
 
 ## Trying the web version on your computer
 
+You don't need this to deploy. It runs the club version on your Mac, so you can try it
+without AWS. From the repository's folder:
+
 ```sh
+python3 -m venv .venv
+source .venv/bin/activate
 pip install ".[server]"
 RBO_AUTH=off racebox-overlay serve --host 127.0.0.1 --port 8080
 ```
 
-Then open http://127.0.0.1:8080/. With sign-in off, everything goes in one person's
-folder in `./rbo-data`. Never run it like this where other people can reach it.
+Then open http://127.0.0.1:8080/ in your browser. With sign-in off, everything goes in
+one person's folder in `./rbo-data`, apart from your normal `racebox-overlay gui`
+projects. Never run it like this where other people can reach it.
+
+The `.venv` only has to be made once. Next time, run `source .venv/bin/activate` and
+then the `racebox-overlay serve` line. On a Mac, use the venv's `pip`; without a venv the
+command is `pip3`, because plain `pip` doesn't exist.

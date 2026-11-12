@@ -4,3 +4,4 @@ __pycache__/
 sample/
 *.png
 *_overlay.mp4
+rbo-data/
