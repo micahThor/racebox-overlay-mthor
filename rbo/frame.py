@@ -23,6 +23,20 @@ FRAME = {
 }
 
 
+def _honeycomb(a: int) -> np.ndarray:
+    """One repeat of a honeycomb (hexagons of size a): bright where cells meet."""
+    tx, ty = max(2, round(a * 1.732)), max(2, round(a * 3))     # lattice spacing; the repeat
+    yy, xx = np.mgrid[0:ty, 0:tx].astype(np.float32) + 0.5
+    d = []
+    for ox, oy in ((0, 0), (tx / 2, ty / 2)):                  # two offset lattices = hexagon centres
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                d.append(np.hypot(xx - (ox + i * tx), yy - (oy + j * ty)))
+    d = np.sort(np.stack(d), axis=0)
+    edge = (d[1] - d[0]) < max(1.0, a * 0.16)
+    return np.where(edge, 4.5, -0.7).astype(np.float32)
+
+
 def frame_colour(theme: dict) -> tuple:
     """The frame's base colour: the theme's own `frame_bg`, or its card colour
     made solid and a shade darker."""
@@ -99,12 +113,26 @@ def draw_frame(hud) -> Image.Image:
     delta = np.broadcast_to((1 - g) * (6 if light else 10) - g * (6 if light else 8), (h1, w1)).copy()
     mul, grid = None, None
     tex = th.get("texture")
-    if shape == "round" and not light and th.get("bg", (0, 0, 0, 0))[3] and th.get("edge", (0, 0, 0, 0))[3] < 100:
+    pattern = th.get("pattern")
+    if pattern is None and shape == "round" and not light and th.get("bg", (0, 0, 0, 0))[3] \
+            and th.get("edge", (0, 0, 0, 0))[3] < 100:
+        pattern = "weave"
+    if pattern == "weave":
         # carbon weave: a fine twill of slightly lighter and darker diagonals
         cell = max(2, U1(7))
         twill = (((xx // cell) + (yy // cell)) % 2) * 2 - 1
         diag = ((xx + yy) // max(1, cell // 2)) % 2
         delta += twill * (2.2 + diag * 1.4)
+    elif pattern == "brushed":                     # brushed metal: fine streaks along the frame
+        rng = np.random.default_rng(11)
+        rows = rng.normal(0, 1, h1).astype(np.float32)
+        k = np.ones(max(1, U1(3))) / max(1, U1(3))
+        rows = np.convolve(rows, k, mode="same")
+        streak = rng.normal(0, 1, (h1, max(2, w1 // max(1, U1(90))) + 1)).astype(np.float32)
+        streak = np.repeat(streak, max(1, U1(90)), axis=1)[:, :w1]
+        delta += rows[:, None] * 2.6 + streak * 0.9
+    elif pattern == "hex":                         # a faint honeycomb, like a radiator grille
+        delta += np.tile(_honeycomb(max(4, U1(8))), (h1 // max(4, U1(8)) + 3, w1 // max(4, U1(8)) + 3))[:h1, :w1]
     elif shape == "slant":                         # broadcast: faint diagonal pinstripes
         delta += (((xx - yy) % U1(18)) < U1(2)) * 5.0
     elif shape == "bracket":                       # HUD: a faint grid
@@ -187,9 +215,12 @@ def draw_frame(hud) -> Image.Image:
         for pts in outline(U(10)):
             d.line(pts, fill=blend(acc, 0.55), width=U(1.5), joint="curve")
         d.line(op(U(6)), fill=acc, width=U(3), joint="curve")
-    else:                                          # carbon, daylight
+    else:                                          # carbon and its family, daylight
         for pts in outline(U(10)):
             d.line(pts, fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")
+        if th.get("trim") == "pinstripe":          # a thin second stripe outside the accent line
+            pin = tuple(th.get("trim_color", (255, 255, 255))[:3])
+            d.line(op(U(9.5)), fill=blend(pin, 0.85), width=U(1.5), joint="curve")
         d.line(op(U(5)), fill=tuple(acc[:3]) + (255,), width=U(3), joint="curve")
         d.line(op(U(11)), fill=blend((255, 255, 255) if not light else (0, 0, 0), 0.07), width=U(1), joint="curve")
     if ss > 1:

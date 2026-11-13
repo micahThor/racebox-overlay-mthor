@@ -639,7 +639,8 @@ class StyleMixin:
         if style == "broadcast":
             if me:
                 d.polygon(self._poly((x0, ry + S(2), x1, ry + rh - S(2)), "slant"), fill=self.C["accent"])
-                fg, dim = white, (255, 255, 255, 215)
+                fg = self._ink_on(self.C["accent"])
+                dim = fg[:3] + (215,)
             elif i % 2 == 0:
                 d.rectangle([x0, ry + S(2), x1, ry + rh - S(2)], fill=self.tint("white", 0.05))
             bx0, bx1 = S(12), S(42)
@@ -673,7 +674,8 @@ class StyleMixin:
         else:
             if me:
                 self.box(d, (x0, ry + S(2), x1, ry + rh - S(2)), fill=self.tint("accent", 0.85), radius=S(7))
-                fg, dim = white, (255, 255, 255, 210)
+                fg = self._ink_on(self.C["accent"])          # dark text on a light accent (Lime, Stealth…)
+                dim = fg[:3] + (210,)
             elif i % 2 == 0:
                 self.box(d, (x0, ry + S(2), x1, ry + rh - S(2)), fill=self.tint("white", 0.05), radius=S(7))
         if style == "default":
@@ -687,7 +689,7 @@ class StyleMixin:
             cx, cy, a = ax, ry + rh / 2, S(5)
             tri = [(cx - a, cy + a * 0.6), (cx + a, cy + a * 0.6), (cx, cy - a * 0.8)] if up else \
                   [(cx - a, cy - a * 0.6), (cx + a, cy - a * 0.6), (cx, cy + a * 0.8)]
-            d.polygon(tri, fill=white if (me and style in ("default", "broadcast")) else col)
+            d.polygon(tri, fill=fg if (me and style in ("default", "broadcast")) else col)
         # the race number: the name's colour (white on dark cards, your row in white), and bigger
         num_col = fg if style != "arcade" else (white if me else fg)
         self.text(d, num_r, base, r["number"], 19 if style != "arcade" else 14, num_col, "r")

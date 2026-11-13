@@ -499,8 +499,7 @@ command line.
 Every render has a frame round the picture: strips on the left, the right,
 above and underneath, drawn as one piece in the theme's style so they read as a single
 border whatever size each strip is. They share one fill and texture (carbon
-weave, broadcast pinstripes, a HUD grid, arcade scanlines, vintage leather
-grain), one outline round the outside, and a trim hugging the picture, whose
+weave, brushed metal, honeycomb, broadcast pinstripes, arcade scanlines), one outline round the outside, and a trim hugging the picture, whose
 corners are shaped to match (rounded, cut, stepped or square). The
 output frame grows to make room (the video itself isn't stretched or cropped):
 
@@ -584,6 +583,19 @@ Colour themes: **carbon** (dark cards, default), **daylight** (light cards
 for bright, washed-out footage), **neon** (outlined, cyan), and **minimal**
 (no cards, outlined text).
 
+The Carbon family keeps Carbon's layout and shapes with their own colours and frame finish:
+
+| Theme | Accent | Frame |
+|---|---|---|
+| **carbon** | orange | carbon weave |
+| **graphite** | electric blue | brushed metal, slightly tighter corners |
+| **rosso** | racing red | carbon weave, with a white pinstripe beside the red trim |
+| **midnight** | yellow on navy | faint honeycomb |
+| **lime** | fluorescent lime | carbon weave |
+| **stealth** | silver on matte black | plain, no glow on the map |
+
+On light accents (Midnight, Lime, Stealth) your own row in the standings uses dark text.
+
 Styled themes change the shapes too, on every panel (lap timer, map and
 marker, speed, lean or G, ghost window, race tower) and the crew chief's
 radio sound:
@@ -591,20 +603,18 @@ radio sound:
 | Theme | Look | Speed / lean | Map marker | Race tower | Radio |
 |---|---|---|---|---|---|
 | **broadcast** (TV Broadcast) | slanted navy cards with a red stripe, condensed type | big number with a slanted bar; centre-zero lean bar | red badge with your race number | position boxes, class colour stripes, red header | clean digital link with chirps |
-| **hud** (Fighter HUD) | no cards, green lines in corner brackets, monospaced | scrolling speed tape; artificial horizon with roll scale | target diamond with heading line | bracketed row, P09-style positions | clipped military radio, roger beep |
 | **arcade** (Retro Arcade) | pixel font, magenta borders, scanlines | LED bar graphs | pixel-art bike | 1ST/2ND hi-score table, your row blinks after a pass | 8-bit, with blips |
-| **vintage** (Vintage Gauges) | cream faces in brass bezels, serif type, paper grain | needle dials with an odometer window; inclinometer | enamel badge | pit-board numbers, your row in yellow | crackly old two-way |
 
-Pick one in the editor or with `--theme hud`. The styled themes use fonts
-that come with macOS (Futura Condensed, Menlo, Rockwell) and fall back to
-similar ones elsewhere; the arcade font is built in.
+Pick one in the editor or with `--theme broadcast`. TV Broadcast uses Futura Condensed
+from macOS and falls back to a similar font elsewhere; the arcade font is built in.
+Videos saved with the old Fighter HUD or Vintage Gauges themes open in Carbon.
 
 Make your own as a JSON file. Start from a built-in and change only what you
 want; the full list of keys is in `rbo/themes.py`:
 
 ```json
 { "base": "carbon", "accent": [0, 160, 255], "bg": [0, 20, 40, 190], "radius": 6,
-  "gauge": "dial", "marker": "target", "radio": "digital" }
+  "pattern": "hex", "trim": "pinstripe", "radio": "digital" }
 ```
 
 Then use `--theme mytheme.json`, or put the file's path in the `theme` field
@@ -615,7 +625,7 @@ of the `.overlay.json`.
 | option | |
 |---|---|
 | `--units kmh` | km/h and metres (default mph and feet) |
-| `--theme neon` | carbon, daylight, neon, minimal, or a theme `.json` |
+| `--theme rosso` | carbon, graphite, rosso, midnight, lime, stealth, daylight, neon, minimal, broadcast, arcade, or a theme `.json` |
 | `--speed-max 80` | top of the speedometer (default 70 mph / 120 km/h) |
 | `--workers 4` | CPU cores drawing the overlay (default: all but one) |
 | `--ghost` / `--no-ghost` | picture-in-picture of your best lap |

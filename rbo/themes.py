@@ -26,6 +26,8 @@ below; missing keys come from "carbon". Colours are [r, g, b] or [r, g, b, a].
       "marker":  "bike" | "badge" | "target" | "sprite" | "enamel"   you on the map
       "tower":   "default" | "broadcast" | "hud" | "arcade" | "pitboard"   race standings
       "texture": null | "scanlines" | "grain"
+      "pattern": "weave" | "brushed" | "hex" | "plain"   the frame's finish (default: weave on dark round themes)
+      "trim": "pinstripe", "trim_color": [r, g, b]   a thin second stripe round the picture
       "map_glow": true, "map_width": 5     racing line on the map
       "radio":   "classic" | "digital" | "military" | "arcade" | "vintage"   crew chief sound
       "frame_bg": [r, g, b]   the frame round the video (default: the card colour, darker)
@@ -52,6 +54,42 @@ THEMES: dict[str, dict] = {
         "radius": 18, "stroke": 0, "stroke_color": (0, 0, 0, 200),
         "shape": "round", "gauge": "arc", "marker": "bike", "tower": "default", "texture": None,
         "map_glow": True, "map_width": 5, "radio": "classic", "font_scale": 1.0,
+    },
+    # the Carbon family: Carbon's layout and shapes, each with its own colours and frame finish
+    "graphite": {
+        "label": "Graphite",
+        "bg": (22, 24, 28, 178), "edge": (255, 255, 255, 34),
+        "text": (240, 242, 245, 255), "dim": (146, 152, 162, 255),
+        "accent": (64, 156, 255, 255), "line": (226, 232, 242, 235),
+        "radius": 14, "pattern": "brushed", "frame_bg": (30, 32, 36),
+    },
+    "rosso": {
+        "label": "Rosso",
+        "bg": (16, 10, 10, 172), "edge": (255, 255, 255, 36),
+        "text": (248, 244, 242, 255), "dim": (172, 152, 150, 255),
+        "accent": (226, 28, 44, 255), "line": (242, 236, 234, 235),
+        "pattern": "weave", "trim": "pinstripe", "trim_color": (236, 232, 228), "frame_bg": (22, 14, 14),
+    },
+    "midnight": {
+        "label": "Midnight",
+        "bg": (8, 14, 32, 182), "edge": (150, 176, 255, 40),
+        "text": (240, 244, 255, 255), "dim": (140, 156, 192, 255),
+        "accent": (255, 190, 0, 255), "yellow": (255, 226, 96, 255), "line": (232, 238, 255, 235),
+        "radius": 16, "pattern": "hex", "frame_bg": (10, 17, 36),
+    },
+    "lime": {
+        "label": "Lime",
+        "bg": (8, 10, 8, 172), "edge": (255, 255, 255, 34),
+        "text": (244, 248, 240, 255), "dim": (150, 160, 146, 255),
+        "accent": (176, 255, 30, 255), "green": (40, 214, 150, 255), "line": (236, 244, 228, 235),
+        "pattern": "weave", "frame_bg": (12, 14, 12),
+    },
+    "stealth": {
+        "label": "Stealth",
+        "bg": (6, 6, 7, 196), "edge": (255, 255, 255, 22),
+        "text": (236, 236, 238, 255), "dim": (124, 124, 130, 255),
+        "accent": (212, 216, 224, 255), "line": (220, 222, 228, 230), "ring": (40, 40, 44, 255),
+        "radius": 12, "pattern": "plain", "map_glow": False, "frame_bg": (10, 10, 11),
     },
     "daylight": {
         "label": "Daylight",
@@ -95,22 +133,6 @@ THEMES: dict[str, dict] = {
                  "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
                  str(FONTS / "BarlowCondensed-ExtraBold.ttf")],
     },
-    "hud": {
-        "label": "Fighter HUD",
-        "bg": (0, 0, 0, 0), "edge": (0, 0, 0, 0),
-        "text": (130, 255, 160, 255), "dim": (70, 200, 120, 255),
-        "accent": (130, 255, 160, 255),
-        "purple": (224, 150, 255, 255), "green": (130, 255, 160, 255),
-        "yellow": (255, 232, 90, 255), "red": (255, 96, 72, 255),
-        "line": (130, 255, 160, 210), "ring": (0, 30, 10, 220),
-        "radius": 0, "stroke": 2.2, "stroke_color": (0, 24, 8, 190),
-        "shape": "bracket", "gauge": "tape", "marker": "target", "tower": "hud",
-        "map_glow": False, "map_width": 2.5, "radio": "military", "frame_bg": (4, 12, 7), "font_scale": 0.92,
-        "font": ["/System/Library/Fonts/Menlo.ttc:Bold",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-                 "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
-                 "/usr/share/fonts/truetype/liberation2/LiberationMono-Bold.ttf"],
-    },
     "arcade": {
         "label": "Retro Arcade",
         "bg": (16, 6, 34, 228), "edge": (255, 46, 196, 255),
@@ -122,19 +144,6 @@ THEMES: dict[str, dict] = {
         "radius": 0, "shape": "pixel", "gauge": "led", "marker": "sprite", "tower": "arcade",
         "texture": "scanlines", "map_width": 5, "radio": "arcade", "font": "pixel", "font_scale": 1.0,
     },
-    "vintage": {
-        "label": "Vintage Gauges",
-        "bg": (238, 229, 206, 244), "edge": (126, 98, 56, 255),
-        "text": (36, 30, 24, 255), "dim": (112, 94, 72, 255),
-        "accent": (170, 30, 30, 255),
-        "purple": (110, 48, 140, 255), "green": (34, 112, 62, 255),
-        "yellow": (172, 122, 14, 255), "red": (170, 30, 30, 255),
-        "line": (44, 36, 28, 235), "ring": (196, 158, 92, 255),
-        "radius": 22, "shape": "bezel", "gauge": "dial", "marker": "enamel", "tower": "pitboard",
-        "texture": "grain", "map_glow": False, "map_width": 4.5, "radio": "vintage", "frame_bg": (70, 48, 30), "font_scale": 1.0,
-        "font": ["/System/Library/Fonts/Supplemental/Rockwell.ttc:Bold", str(FONTS / "Arvo-Bold.ttf"),
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSerifCondensed-Bold.ttf"],
-    },
 }
 
 DEFAULT = "carbon"
@@ -145,9 +154,13 @@ def _rgba(v):
     return v if len(v) == 4 else v + (255,)
 
 
+# themes that have been taken out: videos saved with them open in Carbon
+RETIRED = {"hud", "vintage"}
+
+
 def load_theme(spec: str | dict | None) -> dict:
     """A built-in name, a path to a JSON file, or a dict of overrides."""
-    if spec is None or spec == "":
+    if spec is None or spec == "" or (isinstance(spec, str) and spec.lower() in RETIRED):
         spec = DEFAULT
     if isinstance(spec, str):
         if spec.lower() in THEMES:
