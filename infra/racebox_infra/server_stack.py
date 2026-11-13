@@ -100,7 +100,7 @@ class ServerStack(Stack):
             conditions={"StringEquals": {f"aws:ResourceTag/{TAG[0]}": TAG[1]}}))
 
         data = ec2.Volume(self, "Data", availability_zone=vpc.public_subnets[0].availability_zone,
-                          size=cdk.Size.gibibytes(int(ctx(self, "dataGb", 200))),
+                          size=cdk.Size.gibibytes(int(ctx(self, "dataGb", 100))),
                           volume_type=ec2.EbsDeviceVolumeType.GP3, encrypted=True,
                           removal_policy=RemovalPolicy.SNAPSHOT)
 

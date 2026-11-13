@@ -24,12 +24,13 @@ in to AWS. You deploy from your computer, signed in as yourself, with `infra/dep
 | | |
 |---|---|
 | Server, c7i.2xlarge (8 vCPU) | about $0.36 an hour while it's awake; nothing while asleep |
-| Disk for videos, 200 GB | about $16 a month |
+| Disk for videos, 100 GB | about $8 a month |
 | Server's address (public IPv4) | about $3.60 a month |
 | CloudFront, S3, Cognito, Polly, Lambda | usually cents (free tiers cover a small club) |
 
-A club that has it awake 40 hours a month pays about **$35 a month**. The biggest lever
-is the disk: delete old videos, or make it smaller (`dataGb`). For renders 2x faster, use
+A club that has it awake 40 hours a month pays about **$27 a month**. The disk is billed at
+its full size however much is on it, so keep `dataGb` as small as you need: it can grow
+later but never shrink. Old renders and uploads clear themselves (see "Using it"). For renders 2x faster, use
 `c7i.4xlarge` (about $0.71 an hour).
 
 ## Setting it up (once, from your computer)
@@ -145,7 +146,7 @@ In `infra/cdk.json`. `INSTANCE_TYPE` and `BUDGET_EMAIL` can also go in `infra/lo
 | Setting | Default | |
 |---|---|---|
 | `instanceType` | `c7i.2xlarge` | the server; more vCPUs = faster renders |
-| `dataGb` | `200` | disk for everyone's videos (it can grow later, not shrink) |
+| `dataGb` | `100` | disk for everyone's videos (it can grow later, not shrink) |
 | `idleMinutes` | `30` | sleep after this long unused (`0` = never) |
 | `keepRendersMinutes` | `60` | rendered videos are deleted this long after they're made |
 | `keepUploadsHours` | `72` | uploaded videos are deleted after this long unopened (`0` = keep); settings stay |

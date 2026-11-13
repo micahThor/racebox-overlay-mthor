@@ -2,7 +2,7 @@
   "app": "python3 app.py",
   "context": {
     "instanceType": "c7i.2xlarge",
-    "dataGb": 200,
+    "dataGb": 100,
     "idleMinutes": 30,
     "keepRendersMinutes": 60,
     "keepUploadsHours": 72,
