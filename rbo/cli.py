@@ -131,7 +131,7 @@ def resolve_offset(args, tel, tm, vinfo: dict | None) -> tuple[float, str]:
     elif getattr(args, "project", {}).get("offset") is not None:
         off = tel.t[0] + float(args.project["offset"])
         how = f"saved sync from {project.path_for(args.video).name} (offset {args.project['offset']:.2f}s)"
-    elif sync.has_trailer(args.video):
+    elif sync.camera_gyro(args.video):
         off, how = run_auto_sync(args, tel, tm, vinfo)
     else:
         created = None
@@ -163,7 +163,7 @@ def clock_prior(args, tel, vinfo) -> float | None:
 
 def run_auto_sync(args, tel, tm, vinfo) -> tuple[float, str]:
     prior = clock_prior(args, tel, vinfo)
-    if not args.gyro and sync.has_trailer(args.video):
+    if not args.gyro and sync.camera_gyro(args.video):
         src = f"gyro recorded in {Path(args.video).name}"
     else:
         src = f"gyro in {Path(args.gyro).name}" if args.gyro else "motion in the video"
@@ -578,8 +578,9 @@ def main(argv=None):
                        help="the video starts this far into the data (can be negative)")
         g.add_argument("--auto-sync", action="store_true",
                        help="find the offset by matching camera rotation to the RaceBox yaw rate")
-        g.add_argument("--gyro", metavar="INSV",
-                       help="original Insta360 .insv to take the camera gyro from (implies --auto-sync)")
+        g.add_argument("--gyro", metavar="FILE",
+                       help="original camera file to take the gyro from: an Insta360 .insv or a "
+                            "GoPro .mp4 straight off the card (implies --auto-sync)")
         g.add_argument("--export-start", type=float, default=0.0, metavar="SECONDS",
                        help="if the export was trimmed: how far into the .insv it starts")
         g.add_argument("--time-source", metavar="FILE",

@@ -55,9 +55,9 @@ racebox-overlay sync sample/turning_video.mp4 sample/racebox_session.csv --gyro 
 ## Workflow
 
 **1. Get the video.** Copy the MP4 straight off the camera (Insta360 GO 3S,
-Ace Pro, or any camera). Use the original file rather than one exported from
-the Insta360 app: originals carry the camera's gyro log, which makes sync
-automatic. For a 360 camera (X3/X4), reframe in Insta360 Studio and export
+Ace Pro, a GoPro, or any camera). Use the original file rather than one exported
+from the Insta360 app or GoPro Quik: originals from Insta360 and GoPro (HERO5
+and later) carry the camera's gyro log, which makes sync automatic. For a 360 camera (X3/X4), reframe in Insta360 Studio and export
 an MP4, and keep the original `.insv` for syncing (see below).
 
 **2. Export the data.** On racebox.pro → My Sessions → open the session →
@@ -72,7 +72,7 @@ racebox-overlay info session.csv
 
 Lists every timed lap with sector times, best and theoretical-best lap.
 
-**4. Sync.** Insta360 cameras record their gyro inside the original MP4.
+**4. Sync.** Insta360 and GoPro cameras record their gyro inside the original MP4.
 The tool matches it against the RaceBox yaw rate (every corner is a
 fingerprint in both), so the two line up to within a frame or two:
 
@@ -101,12 +101,15 @@ Things to know about auto-sync:
   camera's own clock (time-zone mistakes corrected) narrows it to the right
   lap. If it's still unsure it says **NOT SURE** and lists the other
   candidates; preview them.
-- If the file has no gyro log (an app export, another camera brand), it
+- If the file has no gyro log (an app or Quik export, another camera brand), it
   measures sideways motion in the video instead. That's slower and a bit
   less precise, but works on anything.
 - 360 cameras: run it on your reframed export with `--gyro` pointing at the
   original `.insv`. The export should start where the `.insv` starts; if
   you trimmed the start in Studio, add `--export-start 8.0` (seconds cut).
+  The same works for a trimmed GoPro clip: `--gyro` the original `.MP4`.
+- GoPro splits long recordings into chapters (`GX010123.MP4`, `GX020123.MP4`, …);
+  each chapter has its own gyro log, so each syncs on its own.
 
 Manual options, if auto-sync can't work:
 - `--sync-lap 2@3:41.20`: lap 2 crosses the start line at 3:41.20 in the video
@@ -667,8 +670,8 @@ session at that track with `--track mytrack.json`. See
   smooth edges. Panels are packed into a small "atlas" image each frame, so
   only ~25% of the frame's pixels go through the pipe, and frames are drawn
   on several CPU cores at once.
-- `rbo/sync.py` — auto-sync: reads the IMU log from the `.insv` trailer (or
-  measures image motion), then slides it along the RaceBox yaw rate with a
+- `rbo/sync.py`, `rbo/gopro.py` — auto-sync: reads the IMU log from the Insta360
+  trailer or the GoPro GPMF track (or measures image motion), then slides it along the RaceBox yaw rate with a
   normalised cross-correlation to find the best match.
 - `rbo/gui.py` + `gui.html` — the editor: a small local web server that
   streams the video to your browser and draws overlay frames on request,

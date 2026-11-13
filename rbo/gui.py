@@ -281,7 +281,7 @@ class Studio:
         return {
             "video": {"name": Path(self.video_path).name, "width": v["width"], "height": v["height"],
                       "fps": float(v["fps"]), "duration": v["duration"],
-                      "has_gyro": self.has_gyro(), "canvas": self.canvas()},
+                      "has_gyro": self.has_gyro(), "gyro_kind": self._gyro_kind, "canvas": self.canvas()},
             "data": {"name": Path(self.proj["session"]).name, "duration": self.tel.duration,
                      "laps": laps, "best": best, "bike": self.tel.is_bike,
                      "panels": self._panel_keys()},
@@ -463,14 +463,10 @@ class Studio:
         return res
 
     def has_gyro(self) -> bool:
-        """Whether the video carries a usable Insta360 gyro log (cached)."""
+        """Whether the video carries a usable gyro log, Insta360 or GoPro (cached)."""
         if not hasattr(self, "_has_gyro"):
-            self._has_gyro = False
-            if sync.has_trailer(self.video_path):
-                try:
-                    self._has_gyro = 0x300 in sync.read_insv_trailer(self.video_path)
-                except sync.SyncError:
-                    pass
+            self._gyro_kind = sync.camera_gyro(self.video_path)
+            self._has_gyro = self._gyro_kind is not None
         return self._has_gyro
 
     def auto_sync(self) -> dict:
@@ -479,7 +475,8 @@ class Studio:
         if self.vinfo.get("created") is not None and guess:
             prior = self.t0 + guess
         name = Path(self.video_path).name
-        how = "the camera's gyro log" if self.has_gyro() else "motion in the picture (no gyro log found; slower)"
+        how = ({"insta360": "the Insta360's gyro log", "gopro": "the GoPro's gyro log"}[self._gyro_kind]
+               if self.has_gyro() else "motion in the picture (no gyro log found; slower)")
         print(f"\nauto-sync: matching {how} in {name} against the RaceBox"
               + (", camera clock as a rough anchor" if prior is not None else ""), flush=True)
         try:

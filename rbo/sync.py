@@ -6,9 +6,10 @@ line up best gives the offset, typically to within a frame or two.
 
 Two sources for the camera side:
 
-* gyro  - the IMU log Insta360 cameras append to the original .insv file.
-          Precise, but only valid for an export that starts where the .insv
-          starts (or pass how far in it starts with --export-start).
+* gyro  - the IMU log Insta360 cameras append to the original .insv file,
+          or the GPMF data track GoPro cameras record (see gopro.py).
+          Precise, but only valid for an export that starts where the
+          original starts (or pass how far in it starts with --export-start).
 * video - sideways image motion measured from the exported MP4 itself.
           Works on any clip, trimmed or not, from any camera. Slower (it has
           to decode the video) and a bit noisier.
@@ -335,18 +336,37 @@ def match(cam_t, cam_v, tel: Telemetry, method: str, prior: float | None = None,
     return SyncResult(float(off), float(ncc[best]), ratio, method, alts)
 
 
+def camera_gyro(path: str | Path) -> str | None:
+    """Which gyro log a video carries: "insta360", "gopro" or None."""
+    if has_trailer(path):
+        try:
+            if 0x300 in read_insv_trailer(path):
+                return "insta360"
+        except SyncError:
+            pass
+    from . import gopro
+    return "gopro" if gopro.has_gpmf(path) else None
+
+
+def gyro_yaw_rate(path: str | Path, export_start: float = 0.0):
+    """Camera yaw rate from an Insta360 or GoPro gyro log."""
+    if has_trailer(path):
+        return insv_yaw_rate(path, export_start)
+    from . import gopro
+    try:
+        return gopro.yaw_rate(path, export_start)
+    except gopro.GoProError as e:
+        raise SyncError(str(e)) from None
+
+
 def auto_sync(video_path: str, tel: Telemetry, gyro: str | None = None,
               export_start: float = 0.0, prior: float | None = None,
               max_seconds: float = 600.0) -> SyncResult:
-    # Insta360 camera MP4s (GO 3S, Ace Pro, ...) carry their own gyro log
-    if not gyro and has_trailer(video_path):
-        try:
-            if 0x300 in read_insv_trailer(video_path):
-                gyro = video_path
-        except SyncError:
-            pass
+    # camera MP4s carry their own gyro log: Insta360 (GO 3S, Ace Pro, ...) and GoPro (HERO5 on)
+    if not gyro and camera_gyro(video_path):
+        gyro = video_path
     if gyro:
-        t, v = insv_yaw_rate(gyro, export_start)
+        t, v = gyro_yaw_rate(gyro, export_start)
         keep = (t >= 0) & (t <= max_seconds * 4)
         if keep.sum() < 100:
             raise SyncError("the gyro log doesn't cover the start of this video")

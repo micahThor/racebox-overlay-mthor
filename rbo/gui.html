@@ -1645,7 +1645,7 @@ if (WEB) {
   fps = S.video.fps || 30;
   $("#files").textContent = `${S.video.name} with ${S.data.name}`;
   $("#autoDesc").textContent = S.video.has_gyro
-    ? "Matches the gyro recorded by your Insta360 against the RaceBox yaw rate."
+    ? `Matches the gyro recorded by your ${S.video.gyro_kind === "gopro" ? "GoPro" : "Insta360"} against the RaceBox yaw rate.`
     : "Matches sideways motion in the video against the RaceBox yaw rate.";
   $("#lapSel").innerHTML = S.data.laps.map(l => `<option value="${l.n}">Lap ${l.n}</option>`).join("");
   if (S.data.laps.length > 1) $("#lapSel").value = 2;
