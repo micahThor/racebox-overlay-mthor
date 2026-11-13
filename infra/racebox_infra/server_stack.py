@@ -4,7 +4,7 @@
                          │  ├─ sign-in: Cognito (only people you add)
                          │  └─ when the instance is asleep: a "waking up" page that
                          │     calls a small Lambda to start it again
-                         └──> S3: finished videos to download (deleted after keepRendersDays)
+                         └──> S3: finished videos to download (deleted after keepRendersMinutes)
 
 One EC2 instance does everything (editor, previews, renders, one at a time). It
 stops itself after idleMinutes with nobody using it, and you pay only for its
@@ -17,6 +17,8 @@ import aws_cdk as cdk
 from aws_cdk import (
     Duration, Fn, RemovalPolicy, Stack, Tags,
     aws_budgets as budgets,
+    aws_events as events,
+    aws_events_targets as targets,
     aws_cloudfront as cf,
     aws_cloudfront_origins as origins,
     aws_cognito as cognito,
@@ -76,8 +78,8 @@ class ServerStack(Stack):
             self, "Renders", block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.S3_MANAGED, enforce_ssl=True,
             removal_policy=RemovalPolicy.RETAIN,
-            lifecycle_rules=[s3.LifecycleRule(prefix="outputs/",
-                                              expiration=Duration.days(int(ctx(self, "keepRendersDays", 30)))),
+            # renders go after keepRendersMinutes (the cleanup function below); this is a backstop
+            lifecycle_rules=[s3.LifecycleRule(prefix="outputs/", expiration=Duration.days(1)),
                              s3.LifecycleRule(abort_incomplete_multipart_upload_after=Duration.days(2))])
         site = s3.Bucket(self, "WakePage", block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
                          encryption=s3.BucketEncryption.S3_MANAGED, enforce_ssl=True,
@@ -137,6 +139,20 @@ class ServerStack(Stack):
             actions=["ec2:StartInstances"],
             resources=[f"arn:aws:ec2:{region}:{self.account}:instance/{server.instance_id}"]))
         wake_url = wake.add_function_url(auth_type=lambda_.FunctionUrlAuthType.AWS_IAM)
+
+        # ------------------------------------------------------------ clearing old renders
+        # every 5 minutes, even while the server sleeps (S3's own expiry works in whole days)
+        keep_minutes = int(ctx(self, "keepRendersMinutes", 60))
+        cleanup = lambda_.Function(
+            self, "RenderCleanup", runtime=lambda_.Runtime.PYTHON_3_12, handler="index.handler",
+            timeout=Duration.seconds(60), memory_size=128,
+            code=lambda_.Code.from_inline((HERE / "wake" / "cleanup.py").read_text()),
+            environment={"BUCKET": renders.bucket_name, "KEEP_MINUTES": str(keep_minutes)},
+            description="Deletes rendered videos once they're older than the limit")
+        renders.grant_read(cleanup)
+        renders.grant_delete(cleanup)
+        events.Rule(self, "RenderCleanupSchedule", schedule=events.Schedule.rate(Duration.minutes(5)),
+                    targets=[targets.LambdaFunction(cleanup)])
 
         # ------------------------------------------------------------ CloudFront
         no_cache = cf.CachePolicy.CACHING_DISABLED
@@ -206,7 +222,9 @@ class ServerStack(Stack):
                 "cognito_domain": domain.base_url(), "cognito_client_id": client.user_pool_client_id,
                 "cognito_pool_id": pool.user_pool_id, "auth": "cognito", "tts": "polly",
                 "idle_minutes": str(ctx(self, "idleMinutes", 30)),
-                "max_gb": str(ctx(self, "maxUploadGb", 20))}))
+                "max_gb": str(ctx(self, "maxUploadGb", 20)),
+                "keep_renders_minutes": str(keep_minutes), "cleanup_by_bucket": "1",
+                "keep_uploads_hours": str(ctx(self, "keepUploadsHours", 72))}))
 
         # ------------------------------------------------------------ a spending alarm
         budget_email = ctx(self, "budgetEmail")

@@ -8,7 +8,7 @@ on the server, and finished videos download from the editor.
 club members ──HTTPS──> CloudFront ──> one EC2 server (Docker: racebox-overlay serve)
                            │   ├─ sign-in: Amazon Cognito (only people you add)
                            │   └─ asleep? a "waking up" page starts it (Lambda)
-                           └─> S3: finished videos (deleted after 30 days)
+                           └─> S3: finished videos (deleted after an hour)
 ```
 
 The server **goes to sleep after 30 minutes with nobody using it**. Opening the
@@ -123,8 +123,15 @@ It's the editor you know, with a few differences:
 - **Open…** lists your videos on the server. **Delete** removes a video with its settings
   and render.
 - **Render video** waits its turn if someone else is rendering. When it's done, a
-  **Download** link appears. Finished videos stay downloadable for 30 days
-  (`keepRendersDays`).
+  **Download** link appears, with the time it's available until. **Rendered videos are
+  deleted an hour after they're made** (`keepRendersMinutes`). Your settings stay, so you
+  can render again any time.
+- **Uploaded videos are deleted after 3 days unopened** (`keepUploadsHours`). Their
+  settings, RaceBox files and race results stay. The video stays in **Open…** marked
+  "video deleted to save space": click it and choose the same file again, and it opens
+  where you left off.
+- Everyone sees only their own files. Files are kept per sign-in (Cognito user), and
+  the server refuses any file outside your own folder.
 - **Saved layouts** belong to you; other people don't see them.
 - The crew chief speaks with Amazon Polly voices (Brian, Amy, Matthew…) instead of the
   Mac's voices.
@@ -140,7 +147,8 @@ In `infra/cdk.json`. `INSTANCE_TYPE` and `BUDGET_EMAIL` can also go in `infra/lo
 | `instanceType` | `c7i.2xlarge` | the server; more vCPUs = faster renders |
 | `dataGb` | `200` | disk for everyone's videos (it can grow later, not shrink) |
 | `idleMinutes` | `30` | sleep after this long unused (`0` = never) |
-| `keepRendersDays` | `30` | how long finished videos stay downloadable |
+| `keepRendersMinutes` | `60` | rendered videos are deleted this long after they're made |
+| `keepUploadsHours` | `72` | uploaded videos are deleted after this long unopened (`0` = keep); settings stay |
 | `maxUploadGb` | `20` | largest file someone can upload |
 | `monthlyBudgetUsd` | `60` | the spending alarm (needs `BUDGET_EMAIL` in `local.env`) |
 | `image` | this repo's image on ghcr.io | the app image the server runs |

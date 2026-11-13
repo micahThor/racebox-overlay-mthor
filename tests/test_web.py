@@ -131,3 +131,55 @@ def test_polly_voice(monkeypatch):
     assert asked["VoiceId"] == "Brian" and asked["Engine"] == "neural"
     assert "&lt;now&gt; &amp; push" in asked["Text"] and 'rate="109%"' in asked["Text"]
     assert abs(len(a) - crewchief.RATE) < crewchief.RATE * 0.1      # about 1 s at 48 kHz
+
+
+def test_old_renders_and_uploads_are_cleared_but_settings_stay(tmp_path):
+    import os
+    app = make_app(tmp_path, auth="off", keep_renders_minutes=60, keep_uploads_hours=72)
+    p = app.person_for("")
+    hour = 3600
+    old_render, new_render = p.outputs / "a_overlay.mp4", p.outputs / "b_overlay.mp4"
+    old_video, new_video = p.files / "old.mp4", p.files / "new.mp4"
+    settings, racebox = p.files / "old.mp4.overlay.json", p.files / "ride.csv"
+    stale_part = p.files / "big.mp4.part"
+    for f in (old_render, new_render, old_video, new_video, settings, racebox, stale_part):
+        f.write_text("{}" if f.suffix == ".json" else "x")
+    now = time.time()
+    os.utime(old_render, (now - 1.1 * hour, now - 1.1 * hour))
+    os.utime(new_render, (now - 0.5 * hour, now - 0.5 * hour))
+    os.utime(old_video, (now - 80 * hour, now - 80 * hour))
+    os.utime(racebox, (now - 500 * hour, now - 500 * hour))
+    os.utime(stale_part, (now - 50 * hour, now - 50 * hour))
+    app.cleanup()
+    assert not old_render.exists() and new_render.exists()
+    assert not old_video.exists() and new_video.exists() and not stale_part.exists()
+    assert settings.exists() and racebox.exists()          # small files stay
+
+
+def test_render_lifetime_stays_inside_the_limit(tmp_path):
+    assert make_app(tmp_path, keep_renders_minutes=60, cleanup_by_bucket="1").render_lifetime() == 55 * 60
+    assert make_app(tmp_path / "b", keep_renders_minutes=60).render_lifetime() == 59 * 60
+
+
+def test_deleted_video_still_listed_with_its_settings(tmp_path):
+    app = make_app(tmp_path, auth="off", keep_uploads_hours=72)
+    p = app.person_for("")
+    (p.files / "VID_1.mp4.overlay.json").write_text('{"theme": "rosso"}')
+    h = web.WebHandler.__new__(web.WebHandler)
+    h.person, h.app = p, app
+    rows = h.recent_list()
+    assert rows[0]["video"] == "VID_1.mp4" and rows[0]["missing"]
+    with pytest.raises(ValueError, match="upload it again"):
+        h.open_studio("VID_1.mp4", None)
+
+
+def test_people_cannot_see_each_others_videos(tmp_path):
+    app = make_app(tmp_path, auth="off")
+    a = web.Person(app.root, "rider-a", "a@example.com")
+    b = web.Person(app.root, "rider-b", "b@example.com")
+    (a.files / "mine.mp4").write_bytes(b"x")
+    h = web.WebHandler.__new__(web.WebHandler)
+    h.person, h.app = b, app
+    assert h.recent_list() == []
+    with pytest.raises(ValueError):
+        b.path(str(a.files / "mine.mp4"))

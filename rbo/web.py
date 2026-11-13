@@ -21,6 +21,12 @@ Settings come from environment variables, or from a JSON parameter in AWS SSM
     RBO_IDLE_MINUTES  stop this EC2 instance after this long unused (0 = never)
     RBO_MAX_GB        largest upload, in GB (default 20)
     RBO_TTS           "polly" for the crew chief to speak with Amazon Polly voices
+    RBO_KEEP_RENDERS_MINUTES  rendered videos are deleted this long after they're made (default 60)
+    RBO_KEEP_UPLOADS_HOURS    uploaded videos are deleted after this long unopened (default 72,
+                      0 = keep). Settings and RaceBox files stay, so a video uploaded again
+                      opens where it was left.
+    RBO_CLEANUP_BY_BUCKET     "1" when something else (the AWS setup's cleanup Lambda) deletes old
+                      renders from the bucket on a schedule
 """
 from __future__ import annotations
 
@@ -68,6 +74,9 @@ def load_config() -> dict:
     cfg.setdefault("auth", "cognito" if cfg.get("cognito_client_id") else "off")
     cfg["idle_minutes"] = float(cfg.get("idle_minutes") or 0)
     cfg["max_gb"] = float(cfg.get("max_gb") or 20)
+    cfg["keep_renders_minutes"] = float(cfg.get("keep_renders_minutes") or 60)
+    cfg["keep_uploads_hours"] = float(cfg.get("keep_uploads_hours") if cfg.get("keep_uploads_hours")
+                                      not in (None, "") else 72)
     cfg["public_url"] = str(cfg.get("public_url") or "").rstrip("/")
     return cfg
 
@@ -128,16 +137,32 @@ class WebHandler(gui.Handler):
             old._huds.clear()
 
     def recent_list(self):
-        out = []
-        for f in sorted(self.person.files.iterdir(), key=lambda f: -f.stat().st_mtime):
-            if f.suffix.lower() not in EXT["video"] or not f.is_file():
+        """Their videos, newest first, including ones whose video was deleted to
+        save space: those keep their settings until the video is uploaded again."""
+        seen, out = set(), []
+        items = []
+        for f in self.person.files.iterdir():
+            if not f.is_file():
                 continue
+            if f.suffix.lower() in EXT["video"]:
+                items.append((f.stat().st_mtime, f, True))
+            elif f.name.endswith(".overlay.json"):
+                v = f.with_name(f.name[: -len(".overlay.json")])
+                if not v.exists() and v.suffix.lower() in EXT["video"]:
+                    items.append((f.stat().st_mtime, v, False))
+        for mtime, f, here in sorted(items, key=lambda x: -x[0]):
+            if f.name in seen:
+                continue
+            seen.add(f.name)
             proj = project.load(f) if project.path_for(f).exists() else {}
             sess = proj.get("session")
-            gb = f.stat().st_size / 1e9
-            when = time.strftime("%b %d, %Y", time.localtime(f.stat().st_mtime))
-            out.append({"video": f.name, "name": f.name,
-                        "folder": f"{gb:.1f} GB · uploaded {when}" if gb >= 0.1 else f"uploaded {when}",
+            when = time.strftime("%b %d, %Y", time.localtime(mtime))
+            if here:
+                gb = f.stat().st_size / 1e9
+                folder = (f"{gb:.1f} GB · " if gb >= 0.1 else "") + f"last opened {when}"
+            else:
+                folder = f"settings saved {when} · video deleted to save space: upload it again to carry on"
+            out.append({"video": f.name, "name": f.name, "folder": folder, "missing": not here,
                         "session": Path(sess).name if sess and Path(sess).exists() else None})
         return out[:30]
 
@@ -145,6 +170,10 @@ class WebHandler(gui.Handler):
         if self.studio and self.studio.render_state.get("state") == "running":
             raise ValueError("wait for your render to finish (or cancel it) before opening another video")
         v = self.person.path(video_path)
+        if not v.exists():
+            raise ValueError(f"{v.name} was deleted to save space; upload it again (Choose…) to carry on "
+                             "where you left off")
+        os.utime(v)                                   # "last opened": old uploads are cleared by this
         s = str(self.person.path(session_path)) if session_path else None
         if s is None:
             saved = project.load(v).get("session") if project.path_for(v).exists() else None
@@ -359,8 +388,13 @@ class WebHandler(gui.Handler):
         if rs.get("state") != "done":
             self.send_error(404, "nothing rendered yet")
             return
+        if rs.get("expires") and time.time() >= rs["expires"]:
+            mins = self.app.cfg["keep_renders_minutes"]
+            self._text(f"That render has been deleted: rendered videos are kept for {mins:.0f} minutes. "
+                       "Your settings are saved, so press Render video to make it again.", HTTPStatus.GONE)
+            return
         if rs.get("s3_key"):
-            self._redirect(self.app.download_url(rs["s3_key"], rs["name"]))
+            self._redirect(self.app.download_url(rs["s3_key"], rs["name"], rs.get("expires")))
             return
         self._send_video(rs["out"], attachment=rs["name"])
 
@@ -513,6 +547,7 @@ class App:
             if src.resolve() != final.resolve():
                 shutil.move(str(src), final)
             info = {"out": str(final), "name": final.name}
+            info["expires"] = time.time() + self.render_lifetime()
             if self.cfg.get("bucket"):
                 key = f"outputs/{person.sub}/{final.name}"
                 self.s3().upload_file(str(final), self.cfg["bucket"], key,
@@ -523,9 +558,17 @@ class App:
             return info
         return done
 
-    def download_url(self, key: str, name: str) -> str:
+    def render_lifetime(self) -> float:
+        """Seconds a rendered video can be downloaded. When a scheduled job clears
+        the bucket every 5 minutes, files go at 5 minutes short of the limit, so
+        none outlives it."""
+        keep = self.cfg["keep_renders_minutes"] * 60
+        return max(300.0, keep - (300 if self.cfg.get("cleanup_by_bucket") else 60))
+
+    def download_url(self, key: str, name: str, expires: float | None = None) -> str:
+        left = int((expires or time.time() + 3600) - time.time())
         return self.s3().generate_presigned_url(
-            "get_object", ExpiresIn=3600,
+            "get_object", ExpiresIn=max(60, min(3600, left)),
             Params={"Bucket": self.cfg["bucket"], "Key": key,
                     "ResponseContentDisposition": f'attachment; filename="{name}"'})
 
@@ -538,6 +581,51 @@ class App:
                 self.s3().delete_object(Bucket=self.cfg["bucket"], Key=o["Key"])
         except Exception as e:  # noqa: BLE001 - the bucket's lifecycle rule clears them anyway
             print(f"couldn't delete old renders of {stem}: {e}", flush=True)
+
+    # -- clearing old files: rendered videos after an hour, uploaded videos when unused
+
+    def in_use(self) -> set[Path]:
+        used = set()
+        for p in list(self.people.values()):
+            st = p.studio
+            if st:
+                used.add(Path(st.video_path).resolve())
+                g = (st.proj.get("ghost_source") or {}).get("video") if getattr(st, "proj", None) else None
+                if g:
+                    used.add(Path(g).resolve())
+        return used
+
+    def cleanup(self) -> None:
+        now = time.time()
+        renders = self.render_lifetime()
+        uploads = self.cfg["keep_uploads_hours"] * 3600
+        used = self.in_use()
+        users = self.root / "users"
+        if not users.exists():
+            return
+        for f in users.glob("*/outputs/*"):               # renders kept on this server (no bucket)
+            if f.is_file() and now - f.stat().st_mtime >= renders:
+                f.unlink(missing_ok=True)
+                print(f"deleted render {f.name} (older than {renders / 60:.0f} min)", flush=True)
+        for f in users.glob("*/files/*"):
+            if not f.is_file():
+                continue
+            age = now - f.stat().st_mtime
+            if f.name.endswith((".part", ".part.json")) and age > 2 * 86400:   # abandoned uploads
+                f.unlink(missing_ok=True)
+            elif uploads and f.suffix.lower() in EXT["video"] and age > uploads and f.resolve() not in used:
+                f.unlink(missing_ok=True)
+                print(f"deleted upload {f.name} (unopened for {uploads / 3600:.0f} h; settings kept)", flush=True)
+
+    def cleanup_watch(self) -> None:
+        def loop():
+            while True:
+                try:
+                    self.cleanup()
+                except Exception as e:  # noqa: BLE001
+                    print(f"cleanup: {e}", flush=True)
+                time.sleep(60)
+        threading.Thread(target=loop, daemon=True).start()
 
     # -- stopping when nobody's using it
 
@@ -601,12 +689,15 @@ def serve(host: str = "0.0.0.0", port: int = 8080) -> None:
     gui.RENDER_SLOT = threading.Semaphore(1)
     WebHandler.app = app
     app.idle_watch()
+    app.cleanup_watch()
     httpd = ThreadingHTTPServer((host, port), WebHandler)
     httpd.daemon_threads = True
     print(f"club editor on http://{host}:{port}/ (public address {cfg['public_url'] or 'not set'}), "
           f"files in {app.root}, sign-in {cfg['auth']}, renders to "
           f"{'s3://' + cfg['bucket'] if cfg.get('bucket') else 'this server'}"
-          + (f", stops after {cfg['idle_minutes']:.0f} min unused" if cfg["idle_minutes"] else ""), flush=True)
+          + (f", stops after {cfg['idle_minutes']:.0f} min unused" if cfg["idle_minutes"] else "")
+          + f"; renders kept {cfg['keep_renders_minutes']:.0f} min, uploads "
+          + (f"{cfg['keep_uploads_hours']:.0f} h unopened" if cfg["keep_uploads_hours"] else "kept"), flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

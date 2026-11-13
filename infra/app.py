@@ -4,7 +4,7 @@
     ./deploy.sh                  deploys from your computer, with your own AWS sign-in
 
 Settings (cdk.json "context", or -c name=value): instanceType, dataGb,
-idleMinutes, keepRendersDays, maxUploadGb, budgetEmail, monthlyBudgetUsd, image.
+idleMinutes, keepRendersMinutes, keepUploadsHours, maxUploadGb, budgetEmail, monthlyBudgetUsd, image.
 """
 import os
 

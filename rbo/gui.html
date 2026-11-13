@@ -1538,6 +1538,10 @@ function showRender(st) {
       const a = document.createElement("a");
       a.href = "/api/download"; a.textContent = "Download"; a.className = "dl";
       status.appendChild(a);
+      if (st.expires) {
+        const until = new Date(st.expires * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        status.appendChild(document.createTextNode(` (until ${until}; it's deleted after that, but your settings stay)`));
+      }
     }
   }
   else if (st.state === "cancelled") status.textContent = "Cancelled.";
@@ -1566,7 +1570,18 @@ function showOpen(rec, cancellable) {
       try { await api("/api/files/delete", { video: r.video }); showOpen((await api("/api/state")).recent, cancellable); }
       catch (e) { $("#oErr").textContent = e.message; }
     });
-    li.querySelector("button").addEventListener("click", () => {
+    li.querySelector("button").addEventListener("click", async () => {
+      $("#oErr").textContent = "";
+      if (r.missing) {              // web app: the video was deleted to save space, settings kept
+        $("#oErr").textContent = `Choose ${r.name} again: your settings for it are saved.`;
+        const u = await choose("video");
+        if (u.error) { $("#oErr").textContent = u.error; return; }
+        if (!u.path) return;
+        if (u.path !== r.video) {
+          $("#oErr").textContent = `That's ${u.path}, not ${r.name}. Choose the same file to get its settings back.`;
+          return;
+        }
+      }
       $("#oVideo").value = r.video; $("#oSession").value = r.session || "";
       if (r.session) doOpen(); else $("#oErr").textContent = "Choose the RaceBox file for this video.";
     });
