@@ -502,7 +502,7 @@ command line.
 Every render has a frame round the picture: strips on the left, the right,
 above and underneath, drawn as one piece in the theme's style so they read as a single
 border whatever size each strip is. They share one fill and texture (carbon
-weave, brushed metal, honeycomb, mown grass, broadcast pinstripes), one outline round the outside, and a trim hugging the picture, whose
+weave, brushed metal, honeycomb, grass, broadcast pinstripes), one outline round the outside, and a trim hugging the picture, whose
 corners are shaped to match (rounded, cut, stepped or square). The
 output frame grows to make room (the video itself isn't stretched or cropped):
 
@@ -594,7 +594,7 @@ The Carbon family keeps Carbon's layout and shapes with their own colours and fr
 | **graphite** | electric blue | brushed metal, slightly tighter corners |
 | **rosso** | racing red | carbon weave, with a white pinstripe beside the red trim |
 | **midnight** | yellow on navy | faint honeycomb |
-| **lime** | fluorescent lime | trackside: mown grass, with a red and white kerb (rumble strip) round the picture |
+| **lime** | fluorescent lime | trackside: thick grass, a white edge line round the picture, and red and white kerbs (rumble strips) at its corners |
 | **stealth** | silver on matte black | plain, no glow on the map |
 
 On light accents (Midnight, Lime, Stealth) your own row in the standings uses dark text.

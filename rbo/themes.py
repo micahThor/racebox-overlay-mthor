@@ -27,7 +27,7 @@ below; missing keys come from "carbon". Colours are [r, g, b] or [r, g, b, a].
       "tower":   "default" | "broadcast" | "hud" | "arcade" | "pitboard"   race standings
       "texture": null | "scanlines" | "grain"
       "pattern": "weave" | "brushed" | "hex" | "grass" | "plain"   the frame's finish (default: weave on dark round themes)
-      "trim": "pinstripe" | "kerb", "trim_color": [r, g, b]   a thin second stripe, or a red and white kerb, round the picture
+      "trim": "pinstripe" | "kerb", "trim_color": [r, g, b]   a thin second stripe round the picture, or kerbs at its corners
       "map_glow": true, "map_width": 5     racing line on the map
       "radio":   "classic" | "digital" | "military" | "arcade" | "vintage"   crew chief sound
       "frame_bg": [r, g, b]   the frame round the video (default: the card colour, darker)
@@ -82,7 +82,7 @@ THEMES: dict[str, dict] = {
         "bg": (8, 10, 8, 172), "edge": (255, 255, 255, 34),
         "text": (244, 248, 240, 255), "dim": (150, 160, 146, 255),
         "accent": (176, 255, 30, 255), "green": (40, 214, 150, 255), "line": (236, 244, 228, 235),
-        # trackside: mown grass round the picture, edged with a red and white kerb
+        # trackside: grass round the picture, kerbs at its corners
         "pattern": "grass", "trim": "kerb", "frame_bg": (34, 74, 30),
     },
     "stealth": {

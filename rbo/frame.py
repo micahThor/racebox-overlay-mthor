@@ -38,54 +38,111 @@ def _honeycomb(a: int) -> np.ndarray:
 
 
 def _grass(h: int, w: int, u: float) -> np.ndarray:
-    """Mown trackside grass, h x w x 3: blades in a tile, broad mowing stripes
-    and patches of lighter and darker green so the tile doesn't show."""
+    """Thick trackside grass, h x w x 3: tufts of blades fanning out, dark
+    underneath and lighter on top, in a tile, with patches of lighter and darker
+    green over it so the tile doesn't show."""
     rng = np.random.default_rng(5)
-    t = max(64, int(256 * u))                       # the blade tile
-    tile = Image.new("RGB", (t, t), (40, 84, 34))
+    t = max(64, int(256 * u))                       # the tile
+    tile = Image.new("RGB", (t, t), (22, 52, 20))
     d = ImageDraw.Draw(tile)
-    greens = [(30, 70, 28), (38, 86, 32), (46, 98, 38), (56, 112, 44), (68, 126, 50), (26, 60, 24)]
-    for _ in range(int(t * t / max(4.0, 14 * u * u))):
-        x, y = rng.uniform(0, t), rng.uniform(0, t)
-        ln = rng.uniform(5, 13) * u
-        a = math.radians(rng.normal(90, 16))
-        col = greens[rng.integers(len(greens))]
-        x2, y2 = x + ln * math.cos(a) * 0.6, y - ln * math.sin(a)
-        for ox in (-t, 0, t):                       # wrap so the tile repeats seamlessly
-            for oy in (-t, 0, t):
-                if -ln <= x + ox <= t + ln and -ln <= y + oy <= t + ln:
-                    d.line([(x + ox, y + oy), (x2 + ox, y2 + oy)], fill=col, width=max(1, round(u * 1.6)))
-    tile = tile.filter(ImageFilter.GaussianBlur(max(0.3, 0.45 * u)))
-    blades = np.array(tile, np.float32)
-    g = np.tile(blades, (h // t + 1, w // t + 1, 1))[:h, :w]
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    band = max(40.0, 150 * u)                       # mowing stripes, on a slant
-    stripe = np.where(((xx * 0.5 + yy) // band) % 2 == 0, 1.10, 0.90)
-    lo = rng.uniform(0.85, 1.12, (max(2, h // int(120 * u) + 2), max(2, w // int(120 * u) + 2)))
+    layers = [[(20, 48, 18), (26, 60, 22), (30, 66, 26)],           # underneath
+              [(36, 80, 30), (44, 94, 34), (50, 102, 40)],
+              [(58, 116, 44), (70, 130, 50), (84, 146, 58)]]        # tips catching the light
+    tufts = int(t * t / max(30.0, 150 * u * u))
+    for layer, greens in enumerate(layers):
+        for _ in range(tufts):
+            bx, by = rng.uniform(0, t), rng.uniform(0, t)
+            for _ in range(rng.integers(8, 18)):
+                ln = rng.uniform(14, 30) * u * (0.8 + 0.15 * layer)
+                a = math.radians(90 + rng.normal(0, 16))
+                bend = rng.normal(0, 0.18)
+                col = greens[rng.integers(len(greens))]
+                x0b = bx + rng.normal(0, 3 * u)
+                mid = (x0b + ln * 0.55 * math.cos(a + bend * 0.5), by - ln * 0.55 * math.sin(a + bend * 0.5))
+                tip = (x0b + ln * math.cos(a + bend), by - ln * math.sin(a + bend))
+                wb = max(1, round(u * rng.uniform(0.9, 1.5)))      # thin blades, thinner at the tip
+                for ox in (-t, 0, t):               # wrap so the tile repeats seamlessly
+                    for oy in (-t, 0, t):
+                        if -ln <= bx + ox <= t + ln and -ln <= by + oy <= t + ln:
+                            d.line([(x0b + ox, by + oy), (mid[0] + ox, mid[1] + oy)], fill=col, width=wb)
+                            d.line([(mid[0] + ox, mid[1] + oy), (tip[0] + ox, tip[1] + oy)], fill=col,
+                                   width=max(1, wb - 1))
+    tile = tile.filter(ImageFilter.GaussianBlur(max(0.3, 0.4 * u)))
+    g = np.tile(np.array(tile, np.float32), (h // t + 1, w // t + 1, 1))[:h, :w]
+    cell = max(8, int(70 * u))
+    lo = rng.uniform(0.82, 1.14, (h // cell + 2, w // cell + 2))
     patch = np.array(Image.fromarray((lo * 100).astype(np.uint8), "L").resize((w, h), Image.BICUBIC),
                      np.float32) / 100
-    return np.clip(g * (stripe * patch)[..., None], 0, 255)
+    return np.clip(g * patch[..., None], 0, 255)
+
+
+def _band(pts, width):
+    """A polygon `width` wide along a path (offsets either side of it)."""
+    half, left, right = width / 2, [], []
+    for k, p in enumerate(pts):
+        a = pts[max(0, k - 1)]
+        b = pts[min(len(pts) - 1, k + 1)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        n = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / n * half, dx / n * half
+        left.append((p[0] + nx, p[1] + ny))
+        right.append((p[0] - nx, p[1] - ny))
+    return left + right[::-1]
 
 
 def _kerb(d, pts, width, seg, red, white):
-    """A red and white kerb (rumble strip) along a closed path."""
-    pts = pts[:-1]                                  # _opening repeats its first points
-    d.line(pts, fill=white, width=width, joint="curve")
+    """A red and white kerb (rumble strip) along an open path, red at both ends."""
+    if len(pts) < 2:
+        return
     lens = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
     total = sum(lens)
-    n = max(2, int(round(total / seg / 2)) * 2)     # an even count, so the colours meet up
+    n = max(1, int(round(total / seg)) | 1)         # an odd count: red at both ends
     seg = total / n
     pos, i, run, red_on = 0.0, 0, [pts[0]], True
+    blocks = []
     for a, b, ln in zip(pts, pts[1:], lens):
-        while i < n and pos + ln >= seg * (i + 1) - 1e-9:
+        while i < n and ln > 0 and pos + ln >= seg * (i + 1) - 1e-9:
             cut = seg * (i + 1) - pos
             p = (a[0] + (b[0] - a[0]) * cut / ln, a[1] + (b[1] - a[1]) * cut / ln)
             run.append(p)
-            if red_on:
-                d.line(run, fill=red, width=width, joint="curve")
+            blocks.append((run, red_on))
             red_on, run, i = not red_on, [p], i + 1
         pos += ln
         run.append(b)
+    if len(run) > 1:
+        blocks.append((run, red_on))
+    for run, is_red in blocks:
+        d.polygon(_band(run, width), fill=red if is_red else white)
+
+
+def _corner_runs(pts, x0, y0, x1, y1, span):
+    """The parts of a loop round the picture that are within `span` of a corner
+    (along both sides), one run per corner."""
+    dense = []
+    for a, b in zip(pts, pts[1:]):                  # fill in the long straight sides
+        n = max(1, int(math.dist(a, b) / 4))
+        dense += [(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n) for k in range(n)]
+    near = lambda p: (p[0] < x0 + span or p[0] > x1 - span) and (p[1] < y0 + span or p[1] > y1 - span)
+    runs, cur = [], []
+    for p in dense:
+        if near(p):
+            cur.append(p)
+        elif cur:
+            runs.append(cur)
+            cur = []
+    if cur:
+        if runs and near(dense[0]):                 # the loop starts mid-corner: join the two halves
+            runs[0] = cur + runs[0]
+        else:
+            runs.append(cur)
+    out = []
+    for run in runs:                                # drop repeated points (they upset the band's edges)
+        clean = [run[0]]
+        for p in run[1:]:
+            if math.dist(p, clean[-1]) > 0.5:
+                clean.append(p)
+        out.append(clean)
+    return out
 
 
 def frame_colour(theme: dict) -> tuple:
@@ -269,13 +326,17 @@ def draw_frame(hud) -> Image.Image:
         for pts in outline(U(10)):
             d.line(pts, fill=blend(acc, 0.55), width=U(1.5), joint="curve")
         d.line(op(U(6)), fill=acc, width=U(3), joint="curve")
-    elif th.get("trim") == "kerb":                 # trackside: a kerb round the picture
+    elif th.get("trim") == "kerb":                 # trackside: a white edge line, kerbs at the corners
         kw = U(20)
-        _kerb(d, op(U(2) + kw / 2), kw, U(40), (206, 28, 34, 255), (238, 238, 232, 255))
-        d.line(op(U(2) + kw), fill=(20, 26, 18, 120), width=U(2), joint="curve")      # its shadow on the grass
         d.line(op(U(2)), fill=(0, 0, 0, 150), width=U(2), joint="curve")
-        for pts in outline(U(10)):
-            d.line(pts, fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")
+        d.line(op(U(6)), fill=(236, 236, 230, 255), width=U(4), joint="curve")
+        span = min(x1 - x0, y1 - y0) * 0.2
+        for run in _corner_runs(op(U(2) + kw / 2), x0, y0, x1, y1, span):
+            _kerb(d, run, kw, U(40), (206, 28, 34, 255), (238, 238, 232, 255))
+        for run in _corner_runs(op(U(3) + kw), x0, y0, x1, y1, span):
+            d.line(run, fill=(16, 30, 14, 140), width=U(2), joint="curve")       # its shadow on the grass
+        d.line(_outer(CW, CH, U(10)), fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5),
+               joint="curve")                      # (only round the outside: nothing across the kerbs)
     else:                                          # carbon and its family, daylight
         for pts in outline(U(10)):
             d.line(pts, fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")
