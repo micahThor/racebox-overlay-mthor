@@ -94,7 +94,7 @@ def load(video: str | Path) -> dict:
     if data.get("side") in ("left", "right", "bottom") and not data.get("strips"):
         data["strips"] = [data["side"]]
     data["race_side"] = data["side"] = None
-    if isinstance(data.get("theme"), str) and data["theme"].lower() in ("hud", "vintage"):
+    if isinstance(data.get("theme"), str) and data["theme"].lower() in ("hud", "vintage", "arcade"):
         data["theme"] = "carbon"                 # themes that have been taken out
     data["strips"] = [st for st in ("left", "right", "bottom") if st in (data.get("strips") or [])]
     return data

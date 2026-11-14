@@ -589,7 +589,7 @@ def main(argv=None):
         s = p.add_argument_group("look")
         s.add_argument("--units", choices=["mph", "kmh"], default=None, help="default mph")
         s.add_argument("--scale", type=float, default=None, help="HUD size multiplier")
-        s.add_argument("--theme", help="carbon, graphite, rosso, midnight, lime, stealth, daylight, neon, minimal, broadcast, arcade, or a theme .json file")
+        s.add_argument("--theme", help="carbon, graphite, rosso, midnight, lime, stealth, daylight, neon, minimal, broadcast, or a theme .json file")
         s.add_argument("--ghost", action=argparse.BooleanOptionalAction, default=None,
                        help="picture-in-picture of your best lap, matched to your position")
         gg = p.add_argument_group("ghost lap from another session (needs --ghost)")

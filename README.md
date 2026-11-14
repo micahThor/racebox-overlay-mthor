@@ -337,7 +337,7 @@ pick your number. Settings save with the video, so after that `--race` or
   cover the picture; move it in the Race tab or by dragging.
 - **The field on the map:** every other rider still racing is shown on the
   track map as a tag with their race number, and you are a bigger circle
-  (a square in Retro Arcade) with your own race number in it, so you stand out. When several classes race together, each
+  with your own race number in it, so you stand out. When several classes race together, each
   class has its own colour: the tags are coloured by class, a key along the
   bottom of the race panel says which colour is which, and the standings mark each row with the
   same colour. Positions between timing-line
@@ -502,7 +502,7 @@ command line.
 Every render has a frame round the picture: strips on the left, the right,
 above and underneath, drawn as one piece in the theme's style so they read as a single
 border whatever size each strip is. They share one fill and texture (carbon
-weave, brushed metal, honeycomb, broadcast pinstripes, arcade scanlines), one outline round the outside, and a trim hugging the picture, whose
+weave, brushed metal, honeycomb, mown grass, broadcast pinstripes), one outline round the outside, and a trim hugging the picture, whose
 corners are shaped to match (rounded, cut, stepped or square). The
 output frame grows to make room (the video itself isn't stretched or cropped):
 
@@ -594,7 +594,7 @@ The Carbon family keeps Carbon's layout and shapes with their own colours and fr
 | **graphite** | electric blue | brushed metal, slightly tighter corners |
 | **rosso** | racing red | carbon weave, with a white pinstripe beside the red trim |
 | **midnight** | yellow on navy | faint honeycomb |
-| **lime** | fluorescent lime | carbon weave |
+| **lime** | fluorescent lime | trackside: mown grass, with a red and white kerb (rumble strip) round the picture |
 | **stealth** | silver on matte black | plain, no glow on the map |
 
 On light accents (Midnight, Lime, Stealth) your own row in the standings uses dark text.
@@ -606,11 +606,10 @@ radio sound:
 | Theme | Look | Speed / lean | Map marker | Race tower | Radio |
 |---|---|---|---|---|---|
 | **broadcast** (TV Broadcast) | slanted navy cards with a red stripe, condensed type | big number with a slanted bar; centre-zero lean bar | red badge with your race number | position boxes, class colour stripes, red header | clean digital link with chirps |
-| **arcade** (Retro Arcade) | pixel font, magenta borders, scanlines | LED bar graphs | pixel-art bike | 1ST/2ND hi-score table, your row blinks after a pass | 8-bit, with blips |
 
 Pick one in the editor or with `--theme broadcast`. TV Broadcast uses Futura Condensed
-from macOS and falls back to a similar font elsewhere; the arcade font is built in.
-Videos saved with the old Fighter HUD or Vintage Gauges themes open in Carbon.
+from macOS and falls back to a similar font elsewhere.
+Videos saved with the old Fighter HUD, Vintage Gauges or Retro Arcade themes open in Carbon.
 
 Make your own as a JSON file. Start from a built-in and change only what you
 want; the full list of keys is in `rbo/themes.py`:
@@ -628,7 +627,7 @@ of the `.overlay.json`.
 | option | |
 |---|---|
 | `--units kmh` | km/h and metres (default mph and feet) |
-| `--theme rosso` | carbon, graphite, rosso, midnight, lime, stealth, daylight, neon, minimal, broadcast, arcade, or a theme `.json` |
+| `--theme rosso` | carbon, graphite, rosso, midnight, lime, stealth, daylight, neon, minimal, broadcast, or a theme `.json` |
 | `--speed-max 80` | top of the speedometer (default 70 mph / 120 km/h) |
 | `--workers 4` | CPU cores drawing the overlay (default: all but one) |
 | `--ghost` / `--no-ghost` | picture-in-picture of your best lap |

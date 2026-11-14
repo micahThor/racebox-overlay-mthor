@@ -37,6 +37,57 @@ def _honeycomb(a: int) -> np.ndarray:
     return np.where(edge, 4.5, -0.7).astype(np.float32)
 
 
+def _grass(h: int, w: int, u: float) -> np.ndarray:
+    """Mown trackside grass, h x w x 3: blades in a tile, broad mowing stripes
+    and patches of lighter and darker green so the tile doesn't show."""
+    rng = np.random.default_rng(5)
+    t = max(64, int(256 * u))                       # the blade tile
+    tile = Image.new("RGB", (t, t), (40, 84, 34))
+    d = ImageDraw.Draw(tile)
+    greens = [(30, 70, 28), (38, 86, 32), (46, 98, 38), (56, 112, 44), (68, 126, 50), (26, 60, 24)]
+    for _ in range(int(t * t / max(4.0, 14 * u * u))):
+        x, y = rng.uniform(0, t), rng.uniform(0, t)
+        ln = rng.uniform(5, 13) * u
+        a = math.radians(rng.normal(90, 16))
+        col = greens[rng.integers(len(greens))]
+        x2, y2 = x + ln * math.cos(a) * 0.6, y - ln * math.sin(a)
+        for ox in (-t, 0, t):                       # wrap so the tile repeats seamlessly
+            for oy in (-t, 0, t):
+                if -ln <= x + ox <= t + ln and -ln <= y + oy <= t + ln:
+                    d.line([(x + ox, y + oy), (x2 + ox, y2 + oy)], fill=col, width=max(1, round(u * 1.6)))
+    tile = tile.filter(ImageFilter.GaussianBlur(max(0.3, 0.45 * u)))
+    blades = np.array(tile, np.float32)
+    g = np.tile(blades, (h // t + 1, w // t + 1, 1))[:h, :w]
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    band = max(40.0, 150 * u)                       # mowing stripes, on a slant
+    stripe = np.where(((xx * 0.5 + yy) // band) % 2 == 0, 1.10, 0.90)
+    lo = rng.uniform(0.85, 1.12, (max(2, h // int(120 * u) + 2), max(2, w // int(120 * u) + 2)))
+    patch = np.array(Image.fromarray((lo * 100).astype(np.uint8), "L").resize((w, h), Image.BICUBIC),
+                     np.float32) / 100
+    return np.clip(g * (stripe * patch)[..., None], 0, 255)
+
+
+def _kerb(d, pts, width, seg, red, white):
+    """A red and white kerb (rumble strip) along a closed path."""
+    pts = pts[:-1]                                  # _opening repeats its first points
+    d.line(pts, fill=white, width=width, joint="curve")
+    lens = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
+    total = sum(lens)
+    n = max(2, int(round(total / seg / 2)) * 2)     # an even count, so the colours meet up
+    seg = total / n
+    pos, i, run, red_on = 0.0, 0, [pts[0]], True
+    for a, b, ln in zip(pts, pts[1:], lens):
+        while i < n and pos + ln >= seg * (i + 1) - 1e-9:
+            cut = seg * (i + 1) - pos
+            p = (a[0] + (b[0] - a[0]) * cut / ln, a[1] + (b[1] - a[1]) * cut / ln)
+            run.append(p)
+            if red_on:
+                d.line(run, fill=red, width=width, joint="curve")
+            red_on, run, i = not red_on, [p], i + 1
+        pos += ln
+        run.append(b)
+
+
 def frame_colour(theme: dict) -> tuple:
     """The frame's base colour: the theme's own `frame_bg`, or its card colour
     made solid and a shade darker."""
@@ -131,6 +182,8 @@ def draw_frame(hud) -> Image.Image:
         streak = rng.normal(0, 1, (h1, max(2, w1 // max(1, U1(90))) + 1)).astype(np.float32)
         streak = np.repeat(streak, max(1, U1(90)), axis=1)[:, :w1]
         delta += rows[:, None] * 2.6 + streak * 0.9
+    elif pattern == "grass":
+        pass                                       # coloured, not a shade: added below
     elif pattern == "hex":                         # a faint honeycomb, like a radiator grille
         delta += np.tile(_honeycomb(max(4, U1(8))), (h1 // max(4, U1(8)) + 3, w1 // max(4, U1(8)) + 3))[:h1, :w1]
     elif shape == "slant":                         # broadcast: faint diagonal pinstripes
@@ -144,8 +197,9 @@ def draw_frame(hud) -> Image.Image:
         delta += np.random.default_rng(7).normal(0, 9, (h1, w1)).astype(np.float32)
     out = np.empty((h1, w1, 4), np.uint8)
     acc_c = C["accent"]
+    grass = _grass(h1, w1, u1) * (base / np.array((34, 74, 30), np.float32)) if pattern == "grass" else None
     for c in range(3):
-        ch = base[c] + delta
+        ch = (grass[..., c] + delta * 0.6) if grass is not None else base[c] + delta
         if grid is not None:
             ch = np.where(grid, ch * 0.88 + acc_c[c] * 0.12, ch)
         if mul is not None:
@@ -153,7 +207,7 @@ def draw_frame(hud) -> Image.Image:
         out[..., c] = np.clip(ch, 0, 255)
     out[..., 3] = 255
     fill = Image.fromarray(out, "RGBA")
-    del out, delta, mul, grid
+    del out, delta, mul, grid, grass
     img = Image.new("RGBA", (CW, CH), tuple(int(v) for v in base) + (0,))   # the lines, at 2x
 
     corner = style["corner"]
@@ -215,6 +269,13 @@ def draw_frame(hud) -> Image.Image:
         for pts in outline(U(10)):
             d.line(pts, fill=blend(acc, 0.55), width=U(1.5), joint="curve")
         d.line(op(U(6)), fill=acc, width=U(3), joint="curve")
+    elif th.get("trim") == "kerb":                 # trackside: a kerb round the picture
+        kw = U(20)
+        _kerb(d, op(U(2) + kw / 2), kw, U(40), (206, 28, 34, 255), (238, 238, 232, 255))
+        d.line(op(U(2) + kw), fill=(20, 26, 18, 120), width=U(2), joint="curve")      # its shadow on the grass
+        d.line(op(U(2)), fill=(0, 0, 0, 150), width=U(2), joint="curve")
+        for pts in outline(U(10)):
+            d.line(pts, fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")
     else:                                          # carbon and its family, daylight
         for pts in outline(U(10)):
             d.line(pts, fill=blend(edge[:3], min(1.0, edge[3] / 255 * 1.6)), width=U(1.5), joint="curve")

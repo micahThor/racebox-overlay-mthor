@@ -26,8 +26,8 @@ below; missing keys come from "carbon". Colours are [r, g, b] or [r, g, b, a].
       "marker":  "bike" | "badge" | "target" | "sprite" | "enamel"   you on the map
       "tower":   "default" | "broadcast" | "hud" | "arcade" | "pitboard"   race standings
       "texture": null | "scanlines" | "grain"
-      "pattern": "weave" | "brushed" | "hex" | "plain"   the frame's finish (default: weave on dark round themes)
-      "trim": "pinstripe", "trim_color": [r, g, b]   a thin second stripe round the picture
+      "pattern": "weave" | "brushed" | "hex" | "grass" | "plain"   the frame's finish (default: weave on dark round themes)
+      "trim": "pinstripe" | "kerb", "trim_color": [r, g, b]   a thin second stripe, or a red and white kerb, round the picture
       "map_glow": true, "map_width": 5     racing line on the map
       "radio":   "classic" | "digital" | "military" | "arcade" | "vintage"   crew chief sound
       "frame_bg": [r, g, b]   the frame round the video (default: the card colour, darker)
@@ -82,7 +82,8 @@ THEMES: dict[str, dict] = {
         "bg": (8, 10, 8, 172), "edge": (255, 255, 255, 34),
         "text": (244, 248, 240, 255), "dim": (150, 160, 146, 255),
         "accent": (176, 255, 30, 255), "green": (40, 214, 150, 255), "line": (236, 244, 228, 235),
-        "pattern": "weave", "frame_bg": (12, 14, 12),
+        # trackside: mown grass round the picture, edged with a red and white kerb
+        "pattern": "grass", "trim": "kerb", "frame_bg": (34, 74, 30),
     },
     "stealth": {
         "label": "Stealth",
@@ -133,17 +134,7 @@ THEMES: dict[str, dict] = {
                  "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
                  str(FONTS / "BarlowCondensed-ExtraBold.ttf")],
     },
-    "arcade": {
-        "label": "Retro Arcade",
-        "bg": (16, 6, 34, 228), "edge": (255, 46, 196, 255),
-        "text": (255, 255, 255, 255), "dim": (90, 220, 255, 255),
-        "accent": (255, 46, 196, 255),
-        "purple": (190, 100, 255, 255), "green": (70, 255, 110, 255),
-        "yellow": (255, 236, 50, 255), "red": (255, 64, 64, 255),
-        "line": (0, 236, 255, 240), "ring": (255, 255, 255, 255),
-        "radius": 0, "shape": "pixel", "gauge": "led", "marker": "sprite", "tower": "arcade",
-        "texture": "scanlines", "map_width": 5, "radio": "arcade", "font": "pixel", "font_scale": 1.0,
-    },
+
 }
 
 DEFAULT = "carbon"
@@ -155,7 +146,7 @@ def _rgba(v):
 
 
 # themes that have been taken out: videos saved with them open in Carbon
-RETIRED = {"hud", "vintage"}
+RETIRED = {"hud", "vintage", "arcade"}
 
 
 def load_theme(spec: str | dict | None) -> dict:
